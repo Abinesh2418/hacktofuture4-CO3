@@ -1,0 +1,20 @@
+[Unit]
+Description=Kali MCP Server (FastMCP SSE on :8765)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/kali-mcp
+Environment=PYTHONUNBUFFERED=1
+Environment=KALI_MCP_HOST=0.0.0.0
+Environment=KALI_MCP_PORT=8765
+Environment=PATH=/opt/kali-mcp/.venv/bin:/root/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/kali-mcp/.venv/bin/python -m kali_mcp_server.server
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/var/log/kali-mcp/server.log
+StandardError=append:/var/log/kali-mcp/server.err
+
+[Install]
+WantedBy=multi-user.target
