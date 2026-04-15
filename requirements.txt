@@ -6,7 +6,12 @@ python-dotenv==1.0.1
 httpx==0.27.2
 websockets==13.1
 loguru==0.7.2
-# MCP client for talking to the red_arsenal server over SSE. Must match
-# (or be compatible with) the server-side pin in red_agent/red_arsenal/
-# requirements.txt. Set MCP_SERVER_URL to point backend→arsenal.
-fastmcp>=0.4.0
+
+# Autonomous CrewAI recon agent
+crewai>=0.80.0
+crewai-tools>=0.14.0
+xmltodict>=0.13.0
+
+# Tests
+pytest>=7.0.0
+pytest-asyncio>=0.23.0

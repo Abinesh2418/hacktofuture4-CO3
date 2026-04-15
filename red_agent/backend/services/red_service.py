@@ -3,20 +3,24 @@
 This module is intentionally the *only* place the backend talks to the
 underlying scanner/exploiter/strategy packages, so the agent core stays
 decoupled from the FastAPI surface.
-
-Recon scans (`run_network_scan`, `run_web_scan`, `run_system_scan`) call
-the red_arsenal MCP server over SSE via `mcp_client`. Exploit and
-strategy paths remain mocked until the exploit-tier MCP tools land.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import deque
 from datetime import datetime
 from typing import Any, Deque
 
-from loguru import logger
+from core.event_bus import event_bus
+from red_agent.scanner.recon_agent import (
+    ReconResult,
+    get_session_result as _get_session_result,
+    has_session as _has_session,
+    list_sessions as _list_sessions,
+    run_recon_session,
+)
 
 from red_agent.backend.schemas.red_schemas import (
     CVELookupRequest,
@@ -31,7 +35,6 @@ from red_agent.backend.schemas.red_schemas import (
     ToolCall,
     ToolStatus,
 )
-from red_agent.backend.services import mcp_client
 from red_agent.exploiter.cve_exploiter import CVEExploiter
 from red_agent.exploiter.exploit_engine import ExploitEngine
 from red_agent.scanner.cloud_scanner import CloudScanner
@@ -79,162 +82,27 @@ def _finish(call: ToolCall, result: dict[str, Any], status: ToolStatus = ToolSta
     return call
 
 
-async def _broadcast_tool_call(call: ToolCall) -> None:
-    """Push a ToolCall snapshot to the /ws/red stream.
-
-    Late-imported to avoid a circular import with the websocket module
-    (red_ws.py imports red_service). Best-effort — a WS failure must
-    never break a scan.
-    """
-    try:
-        from red_agent.backend.websocket.red_ws import manager
-        await manager.broadcast(
-            {"type": "tool_call", "payload": call.model_dump(mode="json")}
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("ws broadcast skipped: {}", exc)
-
-
-async def _broadcast_log(entry: LogEntry) -> None:
-    try:
-        from red_agent.backend.websocket.red_ws import manager
-        await manager.broadcast(
-            {"type": "log", "payload": entry.model_dump(mode="json")}
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("ws broadcast skipped: {}", exc)
-
-
-def _summarize_nmap(raw: dict) -> tuple[list[int], dict[int, str], list[str]]:
-    """Map a red_arsenal nmap result dict onto ScanResult fields."""
-    findings = raw.get("findings") or []
-    open_findings = [f for f in findings if (f.get("state") == "open")]
-    open_ports = sorted({int(f["port"]) for f in open_findings if f.get("port")})
-    services: dict[int, str] = {}
-    notes: list[str] = []
-    for f in open_findings:
-        port = int(f["port"]) if f.get("port") else None
-        if port is None:
-            continue
-        service = f.get("service") or "unknown"
-        product = f.get("product")
-        version = f.get("version")
-        services[port] = service
-        label = f"{port}/{service}"
-        if product:
-            label += f" ({product}{' ' + version if version else ''})"
-        notes.append(label)
-    return open_ports, services, notes
-
-
 async def run_network_scan(request: ScanRequest) -> ScanResult:
-    """Invoke red_arsenal `run_nmap` and shape the output into ScanResult."""
     call = _new_tool_call("nmap_scan", "scan", request.model_dump())
-    await _broadcast_tool_call(call)
-
-    ports = (
-        ",".join(str(p) for p in request.ports)
-        if request.ports
-        else "22,80,443,445,3306,3389,5432,6379,8080,8443"
-    )
-
-    try:
-        raw = await mcp_client.call_tool_and_wait(
-            "run_nmap",
-            {"target": request.target, "ports": ports},
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("run_nmap MCP call failed")
-        _finish(call, {"error": str(exc)}, ToolStatus.FAILED)
-        await _broadcast_tool_call(call)
-        return ScanResult(tool_call=call, findings=[f"mcp error: {exc}"])
-
-    ok = bool(raw.get("ok"))
-    if not ok:
-        _finish(call, raw, ToolStatus.FAILED)
-        await _broadcast_tool_call(call)
-        return ScanResult(
-            tool_call=call,
-            findings=[raw.get("error") or "nmap failed"],
-        )
-
-    open_ports, services, notes = _summarize_nmap(raw)
-    _finish(call, raw, ToolStatus.DONE)
-    await _broadcast_tool_call(call)
-    return ScanResult(
-        tool_call=call,
+    # TODO: invoke _network_scanner against request.target
+    open_ports = request.ports or [22, 80, 443]
+    result = ScanResult(
+        tool_call=_finish(call, {"open_ports": open_ports}),
         open_ports=open_ports,
-        services=services,
-        findings=notes or [f"nmap completed against {request.target}, no open ports"],
+        services={22: "ssh", 80: "http", 443: "https"},
+        findings=[f"target {request.target} reachable"],
     )
-
-
-def _summarize_web_reconnaissance(raw: dict) -> list[str]:
-    """Flatten a web_reconnaissance workflow result into human-readable lines."""
-    notes: list[str] = []
-    for step in raw.get("results") or []:
-        tool = step.get("tool", "?")
-        if not step.get("ok"):
-            notes.append(f"{tool}: FAILED ({step.get('error') or 'unknown'})")
-            continue
-        n = len(step.get("findings") or [])
-        notes.append(f"{tool}: {n} findings in {step.get('duration_s', 0):.1f}s")
-    return notes
+    return result
 
 
 async def run_web_scan(request: ScanRequest) -> ScanResult:
-    """Run the `web_reconnaissance` workflow in wait-mode and aggregate."""
-    call = _new_tool_call("web_reconnaissance", "scan", request.model_dump())
-    await _broadcast_tool_call(call)
-
-    try:
-        raw = await mcp_client.call_tool_and_wait(
-            "web_reconnaissance",
-            {"target": request.target, "wait": True},
-            # Web workflow fans out 8 tools in parallel but some (gau,
-            # nuclei) legitimately take minutes each.
-            poll_timeout_s=1800.0,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("web_reconnaissance MCP call failed")
-        _finish(call, {"error": str(exc)}, ToolStatus.FAILED)
-        await _broadcast_tool_call(call)
-        return ScanResult(tool_call=call, findings=[f"mcp error: {exc}"])
-
-    notes = _summarize_web_reconnaissance(raw)
-    _finish(call, raw, ToolStatus.DONE)
-    await _broadcast_tool_call(call)
-    return ScanResult(tool_call=call, findings=notes or ["web workflow returned no findings"])
+    call = _new_tool_call("web_scan", "scan", request.model_dump())
+    return ScanResult(tool_call=_finish(call, {"target": request.target}))
 
 
 async def run_system_scan(request: ScanRequest) -> ScanResult:
-    """SMB enumeration via `run_smbmap` on the target host."""
-    call = _new_tool_call("smbmap", "scan", request.model_dump())
-    await _broadcast_tool_call(call)
-
-    try:
-        raw = await mcp_client.call_tool_and_wait(
-            "run_smbmap",
-            {"target": request.target},
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("run_smbmap MCP call failed")
-        _finish(call, {"error": str(exc)}, ToolStatus.FAILED)
-        await _broadcast_tool_call(call)
-        return ScanResult(tool_call=call, findings=[f"mcp error: {exc}"])
-
-    notes: list[str] = []
-    for f in raw.get("findings") or []:
-        line = f.get("line")
-        if line:
-            notes.append(line)
-    if not raw.get("ok") and not notes:
-        notes.append(raw.get("error") or "smbmap reported no shares")
-
-    status = ToolStatus.DONE if raw.get("ok") else ToolStatus.FAILED
-    _finish(call, raw, status)
-    await _broadcast_tool_call(call)
-    return ScanResult(tool_call=call, findings=notes or [f"no SMB shares on {request.target}"])
+    call = _new_tool_call("system_scan", "scan", request.model_dump())
+    return ScanResult(tool_call=_finish(call, {"target": request.target}))
 
 
 async def run_cloud_scan(request: ScanRequest) -> ScanResult:
@@ -283,3 +151,72 @@ async def recent_tool_calls(category: str | None = None, limit: int = 20) -> lis
 
 async def recent_logs(limit: int = 100) -> list[LogEntry]:
     return list(_LOG_HISTORY)[-limit:]
+
+
+# ---------- Autonomous CrewAI recon agent wiring --------------------------
+
+_logger = logging.getLogger(__name__)
+_recon_subscribed = False
+
+
+async def start_recon(target: str, context: str | None = None) -> str:
+    """Kick off a background recon session and return its id."""
+    _ensure_recon_subscriptions()
+    session_id = await run_recon_session(target=target, context=context)
+    _LOG_HISTORY.append(
+        LogEntry(level="INFO", message=f"recon started: {session_id} -> {target}")
+    )
+    return session_id
+
+
+def get_recon_result(session_id: str) -> ReconResult | None:
+    return _get_session_result(session_id)
+
+
+def has_recon_session(session_id: str) -> bool:
+    return _has_session(session_id)
+
+
+def list_recon_sessions() -> list[dict]:
+    return _list_sessions()
+
+
+def _ensure_recon_subscriptions() -> None:
+    global _recon_subscribed
+    if _recon_subscribed:
+        return
+    event_bus.subscribe("recon.complete", _on_recon_complete)
+    event_bus.subscribe("recon.failed", _on_recon_failed)
+    _recon_subscribed = True
+
+
+async def _on_recon_complete(data: dict) -> None:
+    _logger.info(
+        "[RedService] recon complete session=%s risk=%s vectors=%s",
+        data.get("session_id"),
+        data.get("risk_score"),
+        len(data.get("attack_vectors") or []),
+    )
+    _LOG_HISTORY.append(
+        LogEntry(
+            level="INFO",
+            message=(
+                f"recon complete: {data.get('session_id')} "
+                f"risk={data.get('risk_score')}"
+            ),
+        )
+    )
+
+
+async def _on_recon_failed(data: dict) -> None:
+    _logger.warning(
+        "[RedService] recon failed session=%s err=%s",
+        data.get("session_id"),
+        data.get("error"),
+    )
+    _LOG_HISTORY.append(
+        LogEntry(
+            level="ERROR",
+            message=f"recon failed: {data.get('session_id')} {data.get('error')}",
+        )
+    )
