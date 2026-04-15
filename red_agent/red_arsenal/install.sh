@@ -185,9 +185,11 @@ sudo "${PIPX_ENV[@]}" pipx install dirsearch 2>/dev/null \
     || sudo "${PIPX_ENV[@]}" pipx upgrade dirsearch || true
 
 # dirsearch imports pkg_resources which comes from setuptools. Python
-# 3.12+ stopped bundling setuptools in new venvs, so we have to inject
-# it manually or dirsearch crashes at import time.
-sudo "${PIPX_ENV[@]}" pipx inject dirsearch setuptools 2>/dev/null || true
+# 3.12+ stopped bundling setuptools in new venvs, so dirsearch crashes
+# at import time unless we drop setuptools into its venv. Use pipx
+# inject *and* a direct pip fallback — one of them will work.
+sudo "${PIPX_ENV[@]}" pipx inject dirsearch setuptools || \
+    sudo /opt/pipx/venvs/dirsearch/bin/pip install setuptools || true
 
 # paramspider is git-only (not on PyPI) — use the repo URL.
 sudo "${PIPX_ENV[@]}" pipx install git+https://github.com/devanshbatham/paramspider.git 2>/dev/null \
