@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Install the Kali MCP server + all tool binaries on a fresh Kali VM.
+# Install the Red Arsenal MCP server + all tool binaries on a fresh Kali VM.
 # Run as a normal user with sudo rights. Idempotent — safe to re-run.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SRC_DIR="$REPO_ROOT/red_agent/kali_mcp_server"
-INSTALL_DIR="/opt/kali-mcp"
+SRC_DIR="$REPO_ROOT/red_agent/red_arsenal"
+INSTALL_DIR="/opt/red-arsenal"
 
 echo "[*] apt packages"
 sudo apt update
@@ -40,12 +40,12 @@ echo "[*] Rust tooling via cargo"
 cargo install rustscan || true
 cargo install x8 || true
 
-echo "[*] Deploy MCP server to ${INSTALL_DIR}"
-# The package is deployed as a top-level `kali_mcp_server` so the server
-# module resolves as `python -m kali_mcp_server.server` on Kali, independent
-# of the repo's red_agent/ nesting.
+echo "[*] Deploy Red Arsenal to ${INSTALL_DIR}"
+# The package is deployed as a top-level `red_arsenal` so the server module
+# resolves as `python -m red_arsenal.server` on Kali, independent of the
+# repo's red_agent/ nesting.
 sudo mkdir -p "$INSTALL_DIR"
-sudo rsync -a --delete "$SRC_DIR/" "$INSTALL_DIR/kali_mcp_server/"
+sudo rsync -a --delete "$SRC_DIR/" "$INSTALL_DIR/red_arsenal/"
 sudo cp "$SRC_DIR/requirements.txt" "$INSTALL_DIR/requirements.txt"
 
 sudo python3 -m venv "$INSTALL_DIR/.venv"
@@ -53,10 +53,10 @@ sudo "$INSTALL_DIR/.venv/bin/pip" install --upgrade pip
 sudo "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
 
 echo "[*] systemd unit"
-sudo cp "$SRC_DIR/systemd/kali-mcp.service" /etc/systemd/system/kali-mcp.service
-sudo mkdir -p /var/log/kali-mcp
+sudo cp "$SRC_DIR/systemd/red-arsenal.service" /etc/systemd/system/red-arsenal.service
+sudo mkdir -p /var/log/red-arsenal
 sudo systemctl daemon-reload
-sudo systemctl enable kali-mcp
-sudo systemctl restart kali-mcp
+sudo systemctl enable red-arsenal
+sudo systemctl restart red-arsenal
 
-echo "[+] Done. Tail the log with:  sudo journalctl -u kali-mcp -f"
+echo "[+] Done. Tail the log with:  sudo journalctl -u red-arsenal -f"

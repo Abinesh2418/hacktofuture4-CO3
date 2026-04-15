@@ -1,0 +1,20 @@
+[Unit]
+Description=Red Arsenal MCP Server (FastMCP SSE on :8765)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/red-arsenal
+Environment=PYTHONUNBUFFERED=1
+Environment=RED_ARSENAL_HOST=0.0.0.0
+Environment=RED_ARSENAL_PORT=8765
+Environment=PATH=/opt/red-arsenal/.venv/bin:/root/go/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/red-arsenal/.venv/bin/python -m red_arsenal.server
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/var/log/red-arsenal/server.log
+StandardError=append:/var/log/red-arsenal/server.err
+
+[Install]
+WantedBy=multi-user.target

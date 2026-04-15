@@ -6,9 +6,9 @@ import os
 import shutil
 from dataclasses import dataclass, field
 
-HOST = os.environ.get("KALI_MCP_HOST", "0.0.0.0")
-PORT = int(os.environ.get("KALI_MCP_PORT", "8765"))
-LOG_DIR = os.environ.get("KALI_MCP_LOG_DIR", "/var/log/kali-mcp")
+HOST = os.environ.get("RED_ARSENAL_HOST", "0.0.0.0")
+PORT = int(os.environ.get("RED_ARSENAL_PORT", "8765"))
+LOG_DIR = os.environ.get("RED_ARSENAL_LOG_DIR", "/var/log/red-arsenal")
 
 DEFAULT_TIMEOUT = 600
 LONG_TIMEOUT = 1800

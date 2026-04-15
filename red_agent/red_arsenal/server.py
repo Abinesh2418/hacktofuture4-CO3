@@ -6,7 +6,7 @@ passes `wait=True`.
 
 Run on the Kali VM:
 
-    python -m kali_mcp_server.server
+    python -m red_arsenal.server
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from .tools import network as net_tools
 from .tools import recon as recon_tools
 from .workflows import run_workflow
 
-mcp = FastMCP(name="kali-mcp-server")
+mcp = FastMCP(name="red-arsenal")
 
 
 # ---------- Helper: submit-or-wait -------------------------------------
@@ -365,11 +365,11 @@ async def server_stats() -> dict:
 @mcp.tool()
 async def ping() -> dict:
     """Liveness check."""
-    return {"ok": True, "service": "kali-mcp-server"}
+    return {"ok": True, "service": "red-arsenal"}
 
 
 def main() -> None:
-    logger.info("kali-mcp-server starting on {}:{}", HOST, PORT)
+    logger.info("red-arsenal starting on {}:{}", HOST, PORT)
     mcp.run(transport="sse", host=HOST, port=PORT)
 
 
