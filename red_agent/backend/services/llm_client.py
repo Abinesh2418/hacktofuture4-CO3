@@ -25,10 +25,7 @@ NVIDIA_API_URL = os.environ.get(
     "LLM_API_URL",
     "https://integrate.api.nvidia.com/v1/chat/completions",
 )
-NVIDIA_API_KEY = os.environ.get(
-    "NVIDIA_API_KEY",
-    "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",
-)
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "meta/llama-3.1-70b-instruct")
 
 # Red team system prompt for general chat/analysis

@@ -32,19 +32,34 @@ _logger = logging.getLogger(__name__)
 
 # ── LLM Configuration (NVIDIA NIM via OpenAI-compatible API) ──
 
-NVIDIA_API_KEY = os.environ.get(
-    "NVIDIA_API_KEY",
-    "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",
-)
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
 
 
 def _get_llm() -> LLM:
-    """Create CrewAI LLM instance pointing to NVIDIA NIM via OpenAI-compatible API."""
+    """NVIDIA NIM Llama 3.1 70B — used by Recon + Analyst agents."""
     return LLM(
         model="openai/meta/llama-3.1-70b-instruct",
         base_url="https://integrate.api.nvidia.com/v1",
         api_key=NVIDIA_API_KEY,
         temperature=0.3,
+    )
+
+
+AZURE_API_KEY = os.environ.get("AZURE_API_KEY", "")
+AZURE_ENDPOINT = os.environ.get(
+    "AZURE_ENDPOINT",
+    "https://abineshbalasubramaniyam-resource.cognitiveservices.azure.com/",
+)
+
+
+def _get_exploit_llm() -> LLM:
+    """Azure GPT-4o — used by Exploit agent for stronger reasoning."""
+    return LLM(
+        model="azure/gpt-4o",
+        api_key=AZURE_API_KEY,
+        base_url=AZURE_ENDPOINT,
+        api_version="2024-12-01-preview",
+        temperature=0.2,
     )
 
 
@@ -100,7 +115,7 @@ def create_exploit_agent() -> Agent:
             "nmap scripts. You document all evidence of exploitation."
         ),
         tools=[nuclei_exploit, ffuf_fuzz, nmap_vuln_scan, nmap_scan],
-        llm=_get_llm(),
+        llm=_get_exploit_llm(),
         verbose=True,
         allow_delegation=False,
         max_iter=5,
