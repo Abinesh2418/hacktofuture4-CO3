@@ -18,16 +18,28 @@ from core.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
-TARGET_IP = "192.168.1.100"
+TARGET_IP = "172.25.8.172"
 
 # Ports exposed by the simulated target system
-TARGET_PORTS = [21, 22, 23, 80, 443, 3306, 8080, 8443, 3389, 5432]
+TARGET_PORTS = [21, 22, 23, 80, 443, 3306, 5000, 8080, 8443, 3389, 5432]
 
 # Sensitive ports that also trigger a port_scanned event (nmap-style sweep)
-SENSITIVE_PORTS = {21, 22, 23, 3306, 5432}
+SENSITIVE_PORTS = {21, 22, 23, 3306, 5000, 5432}
 
 # Chance Red probes a port on any given tick (70 %)
 PROBE_PROBABILITY = 0.70
+
+# Flask/Werkzeug web app endpoints discovered on port 5000
+WEBAPP_ENDPOINTS = [
+    {"path": "/login", "method": "POST", "risk": "high", "attack": "credential_bruteforce"},
+    {"path": "/search?q=Widget", "method": "GET", "risk": "medium", "attack": "sql_injection"},
+    {"path": "/search?q=' OR 1=1--", "method": "GET", "risk": "high", "attack": "sql_injection"},
+    {"path": "/profile?id=1", "method": "GET", "risk": "medium", "attack": "idor"},
+    {"path": "/profile?id=../../etc/passwd", "method": "GET", "risk": "high", "attack": "directory_traversal"},
+]
+
+# Chance Red targets a web endpoint on a given tick (55%)
+WEBAPP_PROBE_PROBABILITY = 0.55
 
 
 def _ts() -> str:
@@ -107,6 +119,43 @@ class IntrusionDetector:
                             "source_ip": source_ip,
                             "target": TARGET_IP,
                         })
+
+                # ── Web application endpoint probing (Flask @ port 5000) ──
+                if random.random() < WEBAPP_PROBE_PROBABILITY:
+                    endpoint = random.choice(WEBAPP_ENDPOINTS)
+                    source_ip = f"10.0.0.{random.randint(2, 254)}"
+                    ts = _ts()
+
+                    attack_type = endpoint["attack"]
+                    event_map = {
+                        "sql_injection": "sql_injection_attempted",
+                        "credential_bruteforce": "credential_attack_detected",
+                        "directory_traversal": "directory_traversal_attempted",
+                        "idor": "idor_attempted",
+                    }
+                    event_type = event_map.get(attack_type, "webapp_attack_detected")
+
+                    print(
+                        f"{ts} < intrusion_detector: Web attack on "
+                        f"http://{TARGET_IP}:5000{endpoint['path']} "
+                        f"({attack_type}, risk={endpoint['risk']})"
+                    )
+                    print(
+                        f'{ts} > event_bus.emit("{event_type}", '
+                        f'{{"endpoint": "{endpoint["path"]}", "attack": "{attack_type}"}})'
+                    )
+
+                    self.detection_count += 1
+                    await event_bus.emit(event_type, {
+                        "endpoint": endpoint["path"],
+                        "method": endpoint["method"],
+                        "attack_type": attack_type,
+                        "risk": endpoint["risk"],
+                        "port": 5000,
+                        "service": "flask",
+                        "source_ip": source_ip,
+                        "target": TARGET_IP,
+                    })
 
             except Exception as exc:
                 logger.error(f"IntrusionDetector error: {exc}")

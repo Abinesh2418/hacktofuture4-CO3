@@ -1,8 +1,8 @@
 """HTF root entry point.
 
-Launches the Red (8001) and Blue (8002) FastAPI backends in parallel
-inside a single process. Each frontend is started independently from
-its own folder via `npm run dev` (Red on 5173, Blue on 5174).
+Launches the Blue (8002) FastAPI backend.
+The Blue frontend is started independently from its own folder
+via `npm run dev` (Blue on 5174).
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import asyncio
 import uvicorn
 
 from blue_agent.backend.main import BLUE_API_PORT, app as blue_app
-from red_agent.backend.main import RED_API_PORT, app as red_app
 
 
 async def _serve(app, port: int) -> None:
@@ -22,10 +21,7 @@ async def _serve(app, port: int) -> None:
 
 
 async def main() -> None:
-    await asyncio.gather(
-        _serve(red_app, RED_API_PORT),
-        _serve(blue_app, BLUE_API_PORT),
-    )
+    await _serve(blue_app, BLUE_API_PORT)
 
 
 if __name__ == "__main__":

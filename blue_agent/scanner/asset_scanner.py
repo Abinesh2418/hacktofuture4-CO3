@@ -97,6 +97,10 @@ _TARGET_ASSETS: List[Dict[str, Any]] = [
     {"host": "192.168.1.16", "port": 8080, "service": "phpmyadmin", "env": "onprem", "layer": "application"},
     {"host": "192.168.1.17", "port": 23,   "service": "telnet",     "env": "onprem", "layer": "system"},
 
+    # ── Target Flask/Werkzeug application (primary target) ─────────
+    {"host": "172.25.8.172", "port": 5000, "service": "flask",      "env": "hybrid", "layer": "application"},
+    {"host": "172.25.8.172", "port": 5000, "service": "werkzeug",   "env": "hybrid", "layer": "webserver"},
+
     # ── Hybrid / DMZ ───────────────────────────────────────────────
     {"host": "172.16.0.10", "port": 443,  "service": "nginx",       "env": "hybrid", "layer": "webserver"},
     {"host": "172.16.0.11", "port": 8443, "service": "apache",      "env": "hybrid", "layer": "webserver"},

@@ -225,6 +225,39 @@ _PATCH_CATALOG: Dict[str, Dict[str, Any]] = {
         ],
         "result": "Kubernetes hardened \u2014 RBAC enabled, PSS enforced \u2713",
     },
+    "flask": {
+        "action": "harden",
+        "ports": [5000],
+        "steps": [
+            "Disable debug mode: set FLASK_DEBUG=0, app.debug=False",
+            "Disable Werkzeug interactive debugger in production",
+            "Set SECRET_KEY to cryptographically random value (os.urandom(32))",
+            "Enable CSRF protection via Flask-WTF CSRFProtect",
+            "Enforce parameterized queries on /search endpoint (prevent SQLi)",
+            "Add input validation/sanitization on all query parameters (q, id)",
+            "Implement rate limiting on /login endpoint (Flask-Limiter: 5/min)",
+            "Add account lockout after 5 failed login attempts",
+            "Enforce authorization checks on /profile?id= (prevent IDOR)",
+            "Set secure HTTP headers: X-Frame-Options, X-Content-Type-Options, CSP",
+            "Disable directory listing and path traversal via safe path joins",
+            "Set SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=True",
+            "Bind Werkzeug to 127.0.0.1 in production (use reverse proxy)",
+            "Remove server version from Werkzeug response headers",
+        ],
+        "result": "Flask/Werkzeug hardened \u2014 debug off, SQLi blocked, auth enforced, rate-limited \u2713",
+    },
+    "werkzeug": {
+        "action": "harden",
+        "ports": [5000],
+        "steps": [
+            "Upgrade Werkzeug to latest stable (3.1.x+)",
+            "Disable interactive debugger: use_debugger=False",
+            "Disable reloader in production: use_reloader=False",
+            "Remove server version header: hide Werkzeug/3.1.8 banner",
+            "Set strict Content-Security-Policy headers",
+        ],
+        "result": "Werkzeug hardened \u2014 debugger disabled, version hidden \u2713",
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -371,6 +404,42 @@ _CVE_FIX_CATALOG: Dict[str, Dict[str, Any]] = {
         "service": "proftpd",
         "steps": ["Upgrade ProFTPD to 1.3.6b+", "Disable mod_copy module"],
         "result": "CVE-2019-12815 fixed \u2014 arbitrary file copy patched \u2713",
+    },
+    # Flask / Werkzeug CVEs (target: 172.25.8.172:5000)
+    "CVE-2023-30861": {
+        "service": "flask",
+        "steps": ["Upgrade Flask to 2.3.2+", "Set SESSION_COOKIE_SAMESITE='Lax'", "Ensure Vary: Cookie header is set on responses"],
+        "result": "CVE-2023-30861 fixed \u2014 session cookie exposure patched \u2713",
+    },
+    "CVE-2023-25577": {
+        "service": "werkzeug",
+        "steps": ["Upgrade Werkzeug to 2.2.3+", "Set max_form_memory_size limit", "Configure request.max_content_length"],
+        "result": "CVE-2023-25577 fixed \u2014 multipart parser DoS patched \u2713",
+    },
+    "CVE-2023-23934": {
+        "service": "werkzeug",
+        "steps": ["Upgrade Werkzeug to 2.2.3+", "Validate cookie domain settings", "Set SESSION_COOKIE_DOMAIN explicitly"],
+        "result": "CVE-2023-23934 fixed \u2014 cookie injection patched \u2713",
+    },
+    "CVE-2024-34069": {
+        "service": "werkzeug",
+        "steps": ["Upgrade Werkzeug to 3.0.3+", "Disable debugger in production: WERKZEUG_DEBUG_PIN=off", "Remove debug=True from all Flask configs"],
+        "result": "CVE-2024-34069 fixed \u2014 debugger RCE patched \u2713",
+    },
+    "CVE-2023-46136": {
+        "service": "werkzeug",
+        "steps": ["Upgrade Werkzeug to 3.0.1+", "Limit multipart form data size", "Set request timeout"],
+        "result": "CVE-2023-46136 fixed \u2014 multipart resource exhaustion patched \u2713",
+    },
+    "CVE-2024-49767": {
+        "service": "werkzeug",
+        "steps": ["Upgrade Werkzeug to 3.1.0+", "Set request.max_form_parts limit"],
+        "result": "CVE-2024-49767 fixed \u2014 form data resource exhaustion patched \u2713",
+    },
+    "CVE-2019-1010083": {
+        "service": "flask",
+        "steps": ["Upgrade Flask to 1.0+", "Disable debug mode in production", "Set TRAP_BAD_REQUEST_ERRORS=False"],
+        "result": "CVE-2019-1010083 fixed \u2014 unexpected DoS patched \u2713",
     },
 }
 

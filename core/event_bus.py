@@ -23,6 +23,12 @@ VALID_EVENT_TYPES = {
     "patch_complete",
     "isolation_complete",
     "blue_ready",
+    # Web application attack events (Flask/Werkzeug target)
+    "webapp_attack_detected",
+    "sql_injection_attempted",
+    "credential_attack_detected",
+    "directory_traversal_attempted",
+    "idor_attempted",
 }
 
 

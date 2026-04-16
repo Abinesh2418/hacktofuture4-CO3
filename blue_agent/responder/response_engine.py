@@ -28,7 +28,7 @@ from core.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
-TARGET_IP = "192.168.1.100"
+TARGET_IP = "172.25.8.172"
 
 # ---------------------------------------------------------------------------
 # Simulated firewall / isolation state  (module-level so all handlers share it)
@@ -48,11 +48,19 @@ _PORT_SERVICE: Dict[int, str] = {
     80: "apache httpd",
     443: "apache httpd",
     3306: "mysql",
+    5000: "flask",
     8080: "apache httpd",
     5432: "postgresql",
     3389: "rdp",
     8443: "apache httpd",
 }
+
+# ---------------------------------------------------------------------------
+# Web application defense state (Flask/Werkzeug @ port 5000)
+# ---------------------------------------------------------------------------
+_waf_rules: Set[str] = set()          # active WAF rules
+_rate_limited_ips: Set[str] = set()   # IPs under rate limiting
+_blocked_endpoints: Set[str] = set()  # endpoints with input validation enforced
 
 
 def _ts() -> str:
@@ -127,6 +135,44 @@ async def _block_ip(source_ip: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Web application response actions (Flask/Werkzeug @ 172.25.8.172:5000)
+# ---------------------------------------------------------------------------
+
+async def _deploy_waf_rule(rule_name: str, endpoint: str, attack_type: str) -> bool:
+    """Simulate deploying a WAF rule to block attack patterns."""
+    ts = _ts()
+    params = {"rule": rule_name, "endpoint": endpoint, "attack": attack_type}
+    print(f"{ts} > deploy_waf_rule({json.dumps(params)})")
+    await asyncio.sleep(0.05)
+    _waf_rules.add(rule_name)
+    print(f"{ts} < deploy_waf_rule: WAF rule '{rule_name}' ACTIVE on {endpoint} \u2713")
+    return True
+
+
+async def _rate_limit_ip(source_ip: str, endpoint: str, max_rpm: int = 10) -> bool:
+    """Simulate applying rate limiting on an IP for a specific endpoint."""
+    ts = _ts()
+    params = {"source_ip": source_ip, "endpoint": endpoint, "max_rpm": max_rpm}
+    print(f"{ts} > rate_limit({json.dumps(params)})")
+    await asyncio.sleep(0.03)
+    _rate_limited_ips.add(source_ip)
+    print(f"{ts} < rate_limit: {source_ip} limited to {max_rpm} req/min on {endpoint} \u2713")
+    return True
+
+
+async def _enforce_input_validation(endpoint: str, param: str, validation_type: str) -> bool:
+    """Simulate enforcing strict input validation on a parameter."""
+    ts = _ts()
+    params = {"endpoint": endpoint, "param": param, "validation": validation_type}
+    print(f"{ts} > enforce_input_validation({json.dumps(params)})")
+    await asyncio.sleep(0.04)
+    key = f"{endpoint}:{param}"
+    _blocked_endpoints.add(key)
+    print(f"{ts} < enforce_input_validation: {validation_type} enforced on {endpoint}?{param} \u2713")
+    return True
+
+
+# ---------------------------------------------------------------------------
 # ResponseEngine
 # ---------------------------------------------------------------------------
 
@@ -152,6 +198,12 @@ class ResponseEngine:
         event_bus.subscribe("exploit_attempted", self._on_exploit_attempted)
         event_bus.subscribe("cve_detected", self._on_cve_detected)
         event_bus.subscribe("anomaly_detected", self._on_anomaly_detected)
+        # Web application attack handlers (Flask/Werkzeug @ port 5000)
+        event_bus.subscribe("sql_injection_attempted", self._on_sql_injection)
+        event_bus.subscribe("credential_attack_detected", self._on_credential_attack)
+        event_bus.subscribe("directory_traversal_attempted", self._on_directory_traversal)
+        event_bus.subscribe("idor_attempted", self._on_idor_attempt)
+        event_bus.subscribe("webapp_attack_detected", self._on_webapp_attack)
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -237,3 +289,127 @@ class ResponseEngine:
                 "anomaly_type": data.get("type", "unknown"),
                 "status": "BLOCKED",
             })
+
+    # ------------------------------------------------------------------
+    # Web application attack handlers (Flask/Werkzeug @ 172.25.8.172:5000)
+    # ------------------------------------------------------------------
+
+    async def _on_sql_injection(self, event_type: str, data: Dict[str, Any]) -> None:
+        """sql_injection_attempted → deploy WAF rule + enforce input validation + block IP."""
+        source_ip = data.get("source_ip", "")
+        endpoint = data.get("endpoint", "/search")
+        rule_name = f"sqli_block_{endpoint.replace('/', '_')}"
+
+        if rule_name not in _waf_rules:
+            await _deploy_waf_rule(rule_name, endpoint, "sql_injection")
+        await _enforce_input_validation(endpoint, "q", "parameterized_query")
+
+        if source_ip and source_ip not in _blocked_ips:
+            await _block_ip(source_ip)
+
+        self.response_count += 1
+        await event_bus.emit("response_complete", {
+            "action": "block_sql_injection",
+            "endpoint": endpoint,
+            "service": "flask",
+            "port": 5000,
+            "source_ip": source_ip,
+            "waf_rule": rule_name,
+            "status": "WAF_DEPLOYED",
+        })
+
+    async def _on_credential_attack(self, event_type: str, data: Dict[str, Any]) -> None:
+        """credential_attack_detected → rate limit + account lockout + block IP."""
+        source_ip = data.get("source_ip", "")
+        endpoint = data.get("endpoint", "/login")
+
+        if source_ip and source_ip not in _rate_limited_ips:
+            await _rate_limit_ip(source_ip, endpoint, max_rpm=5)
+
+        rule_name = "credential_protection_login"
+        if rule_name not in _waf_rules:
+            await _deploy_waf_rule(rule_name, endpoint, "brute_force")
+
+        if source_ip and source_ip not in _blocked_ips:
+            await _block_ip(source_ip)
+
+        self.response_count += 1
+        await event_bus.emit("response_complete", {
+            "action": "block_credential_attack",
+            "endpoint": endpoint,
+            "service": "flask",
+            "port": 5000,
+            "source_ip": source_ip,
+            "status": "RATE_LIMITED",
+        })
+
+    async def _on_directory_traversal(self, event_type: str, data: Dict[str, Any]) -> None:
+        """directory_traversal_attempted → WAF rule + input sanitization + block IP."""
+        source_ip = data.get("source_ip", "")
+        endpoint = data.get("endpoint", "/profile")
+        rule_name = f"traversal_block_{endpoint.replace('/', '_')}"
+
+        if rule_name not in _waf_rules:
+            await _deploy_waf_rule(rule_name, endpoint, "directory_traversal")
+        await _enforce_input_validation(endpoint, "id", "path_sanitization")
+
+        if source_ip and source_ip not in _blocked_ips:
+            await _block_ip(source_ip)
+
+        self.response_count += 1
+        await event_bus.emit("response_complete", {
+            "action": "block_directory_traversal",
+            "endpoint": endpoint,
+            "service": "flask",
+            "port": 5000,
+            "source_ip": source_ip,
+            "waf_rule": rule_name,
+            "status": "WAF_DEPLOYED",
+        })
+
+    async def _on_idor_attempt(self, event_type: str, data: Dict[str, Any]) -> None:
+        """idor_attempted → enforce authorization + input validation + block IP."""
+        source_ip = data.get("source_ip", "")
+        endpoint = data.get("endpoint", "/profile")
+        rule_name = "idor_protection_profile"
+
+        if rule_name not in _waf_rules:
+            await _deploy_waf_rule(rule_name, endpoint, "idor")
+        await _enforce_input_validation(endpoint, "id", "authorization_check")
+
+        if source_ip and source_ip not in _blocked_ips:
+            await _block_ip(source_ip)
+
+        self.response_count += 1
+        await event_bus.emit("response_complete", {
+            "action": "block_idor",
+            "endpoint": endpoint,
+            "service": "flask",
+            "port": 5000,
+            "source_ip": source_ip,
+            "status": "AUTH_ENFORCED",
+        })
+
+    async def _on_webapp_attack(self, event_type: str, data: Dict[str, Any]) -> None:
+        """webapp_attack_detected → generic WAF + block IP."""
+        source_ip = data.get("source_ip", "")
+        endpoint = data.get("endpoint", "/")
+        attack_type = data.get("attack_type", "unknown")
+
+        rule_name = f"webapp_block_{attack_type}"
+        if rule_name not in _waf_rules:
+            await _deploy_waf_rule(rule_name, endpoint, attack_type)
+
+        if source_ip and source_ip not in _blocked_ips:
+            await _block_ip(source_ip)
+
+        self.response_count += 1
+        await event_bus.emit("response_complete", {
+            "action": "block_webapp_attack",
+            "endpoint": endpoint,
+            "service": "flask",
+            "port": 5000,
+            "source_ip": source_ip,
+            "attack_type": attack_type,
+            "status": "WAF_DEPLOYED",
+        })

@@ -51,9 +51,13 @@ class Isolator:
     # ------------------------------------------------------------------
 
     def register(self) -> None:
-        """Wire subscriptions to exploitation and anomaly events."""
+        """Wire subscriptions to exploitation, anomaly, and web app attack events."""
         event_bus.subscribe("exploit_attempted", self._on_exploit_attempted)
         event_bus.subscribe("anomaly_detected", self._on_anomaly_detected)
+        # Web application attacks also trigger isolation
+        event_bus.subscribe("sql_injection_attempted", self._on_exploit_attempted)
+        event_bus.subscribe("credential_attack_detected", self._on_anomaly_detected)
+        event_bus.subscribe("directory_traversal_attempted", self._on_exploit_attempted)
 
     # ------------------------------------------------------------------
     # Internal simulation actions

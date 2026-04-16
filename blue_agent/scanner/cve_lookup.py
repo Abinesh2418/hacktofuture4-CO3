@@ -273,6 +273,42 @@ _CVE_DB: Dict[Tuple[str, str], List[Dict[str, Any]]] = {
          "fix": "Upgrade to ProFTPD 1.3.6b+ or disable mod_copy"},
     ],
     ("proftpd", "1.3.7"): [],
+    # ── Flask ──────────────────────────────────────────────────────
+    ("flask", "3.1.8"): [
+        {"id": "CVE-2023-30861", "cvss": 7.5,
+         "desc": "Session cookie set without Vary: Cookie header, may be cached by proxies and served to other users",
+         "fix": "Upgrade Flask to 2.3.2+; set SESSION_COOKIE_SAMESITE='Lax'"},
+        {"id": "CVE-2019-1010083", "cvss": 7.5,
+         "desc": "Unexpected memory usage via crafted encoded JSON data",
+         "fix": "Upgrade Flask to 1.0+; disable debug mode in production"},
+    ],
+    ("flask", "2.3.0"): [
+        {"id": "CVE-2023-30861", "cvss": 7.5,
+         "desc": "Session cookie exposure via missing Vary header",
+         "fix": "Upgrade Flask to 2.3.2+"},
+    ],
+    ("flask", "3.0.0"): [],
+    # ── Werkzeug ───────────────────────────────────────────────────
+    ("werkzeug", "3.1.8"): [
+        {"id": "CVE-2024-34069", "cvss": 9.8,
+         "desc": "Debugger RCE — remote code execution via Werkzeug interactive debugger if enabled in production",
+         "fix": "Upgrade Werkzeug to 3.0.3+; disable debugger in production"},
+        {"id": "CVE-2024-49767", "cvss": 7.5,
+         "desc": "Resource exhaustion via multipart form data — excessive memory consumption",
+         "fix": "Upgrade Werkzeug to 3.1.0+; set request.max_form_parts limit"},
+        {"id": "CVE-2023-46136", "cvss": 7.5,
+         "desc": "Multipart form data parser DoS via resource exhaustion",
+         "fix": "Upgrade Werkzeug to 3.0.1+; limit multipart form data size"},
+    ],
+    ("werkzeug", "2.2.2"): [
+        {"id": "CVE-2023-25577", "cvss": 7.5,
+         "desc": "Multipart parser DoS — high resource consumption on large form data",
+         "fix": "Upgrade Werkzeug to 2.2.3+; set max_form_memory_size"},
+        {"id": "CVE-2023-23934", "cvss": 5.3,
+         "desc": "Cookie injection via domain attribute on localhost",
+         "fix": "Upgrade Werkzeug to 2.2.3+; validate cookie domain settings"},
+    ],
+    ("werkzeug", "3.0.3"): [],
 }
 
 

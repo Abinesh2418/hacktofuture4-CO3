@@ -180,7 +180,7 @@ class BlueController:
 
         # 3. Announce readiness
         await event_bus.emit("blue_ready", {
-            "message": "Blue Agent fully operational — continuous defense active",
+            "message": "Blue Agent fully operational \u2014 continuous defense active (target: 172.25.8.172:5000)",
             "subsystems": [
                 "intrusion_detector",
                 "anomaly_detector",
@@ -194,6 +194,18 @@ class BlueController:
                 "defense_evolver",
             ],
             "environments": ["cloud", "onprem", "hybrid"],
+            "primary_target": {
+                "ip": "172.25.8.172",
+                "port": 5000,
+                "service": "Flask/Werkzeug 3.1.8",
+                "endpoints": ["/login", "/search", "/profile"],
+                "attack_vectors": [
+                    "credential_bruteforce",
+                    "sql_injection",
+                    "directory_traversal",
+                    "idor",
+                ],
+            },
         })
 
         ts = _ts()
@@ -203,6 +215,13 @@ class BlueController:
         )
         print(
             f"{ts} < blue_controller: Monitoring: Cloud + On-Premise + Hybrid environments"
+        )
+        print(
+            f"{ts} < blue_controller: Primary target: Flask/Werkzeug 3.1.8 @ 172.25.8.172:5000"
+        )
+        print(
+            f"{ts} < blue_controller: Defending endpoints: /login /search /profile "
+            f"(SQLi, brute-force, IDOR, traversal)"
         )
 
         # 4. Run ALL loops concurrently — none blocks the others.

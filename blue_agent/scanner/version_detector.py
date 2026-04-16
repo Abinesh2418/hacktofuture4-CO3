@@ -117,6 +117,17 @@ _VERSION_DB: Dict[str, List[Dict[str, str]]] = {
         {"version": "7.17.0", "banner": "Elasticsearch 7.17.0"},
         {"version": "8.5.0", "banner": "Elasticsearch 8.5.0"},
     ],
+    # Flask / Werkzeug (target: 172.25.8.172:5000)
+    "flask": [
+        {"version": "3.1.8", "banner": "Werkzeug/3.1.8 Python/3.11"},
+        {"version": "2.3.0", "banner": "Werkzeug/2.3.0 Python/3.10"},
+        {"version": "3.0.0", "banner": "Werkzeug/3.0.0 Python/3.12"},
+    ],
+    "werkzeug": [
+        {"version": "3.1.8", "banner": "Werkzeug/3.1.8"},
+        {"version": "2.2.2", "banner": "Werkzeug/2.2.2"},
+        {"version": "3.0.3", "banner": "Werkzeug/3.0.3"},
+    ],
 }
 
 
@@ -191,6 +202,8 @@ class VersionDetector:
             "phpmyadmin": "page_fingerprint",
             "tomcat": "http_header",
             "django": "error_page_fingerprint",
+            "flask": "http_header",
+            "werkzeug": "http_header",
             "docker": "api_query",
             "kubernetes": "api_query",
             "elasticsearch": "api_query",

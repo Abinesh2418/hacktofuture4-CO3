@@ -1,11 +1,10 @@
-# HTF — Master docker-compose
-# Brings up BOTH Red and Blue agents (backend + frontend) on a shared network.
+# HTF — Docker-compose for Blue Agent
 #
 # Usage:
 #   docker-compose up --build              # build & run everything
 #   docker-compose up -d                   # detached
 #   docker-compose down                    # tear everything down
-#   docker-compose logs -f red-backend     # tail a single service
+#   docker-compose logs -f blue-backend    # tail a single service
 #
 # Prerequisite: copy .env.example -> .env
 #   cp .env.example .env
@@ -15,57 +14,6 @@
 # by removing `target:`, the volume mounts, and the `command:` override.
 
 services:
-  red-backend:
-    container_name: htf-red-backend
-    build:
-      context: .
-      dockerfile: red_agent/backend/Dockerfile
-    image: htf/red-backend:dev
-    ports:
-      - "8001:8001"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      PYTHONPATH: /app
-    volumes:
-      - ./red_agent:/app/red_agent
-      - ./core:/app/core
-      - ./shared:/app/shared
-      - ./config:/app/config
-    command: >
-      uvicorn red_agent.backend.main:app
-      --host 0.0.0.0 --port 8001 --reload
-    networks:
-      - htf-network
-
-  red-frontend:
-    container_name: htf-red-frontend
-    build:
-      context: ./red_agent/frontend
-      dockerfile: Dockerfile
-      target: build
-    image: htf/red-frontend:dev
-    ports:
-      - "3001:3001"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      VITE_RED_API_URL: http://localhost:8001
-      VITE_RED_WS_URL: ws://localhost:8001/ws/red
-    volumes:
-      - ./red_agent/frontend/src:/app/src
-      - ./red_agent/frontend/public:/app/public
-      - ./red_agent/frontend/index.html:/app/index.html
-      - ./red_agent/frontend/vite.config.ts:/app/vite.config.ts
-      - ./red_agent/frontend/tsconfig.json:/app/tsconfig.json
-    command: npm run dev -- --host 0.0.0.0 --port 3001
-    depends_on:
-      - red-backend
-    networks:
-      - htf-network
-
   blue-backend:
     container_name: htf-blue-backend
     build:
