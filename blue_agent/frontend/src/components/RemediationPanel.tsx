@@ -23,8 +23,9 @@ export function RemediationPanel({ result, accent }: Props) {
         padding: 14,
         display: "flex",
         flexDirection: "column",
-        gap: 10,
-        overflow: "auto",
+        gap: 8,
+        overflow: "hidden",
+        minHeight: 0,
       }}
     >
       {/* Header */}
@@ -53,6 +54,7 @@ export function RemediationPanel({ result, accent }: Props) {
           display: "grid",
           gridTemplateColumns: "1fr 1fr 1fr",
           gap: 8,
+          flexShrink: 0,
         }}
       >
         <StatBox label="FINDINGS" value={result.total_findings} color="#f85149" />
@@ -109,7 +111,7 @@ export function RemediationPanel({ result, accent }: Props) {
       )}
 
       {/* Applied fixes list */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, overflow: "auto", flex: 1 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, overflow: "auto", flex: 1, minHeight: 0 }}>
         <span style={{ color: "#8b949e", fontSize: 10, letterSpacing: 1 }}>APPLIED FIXES</span>
         {result.applied_fixes.map((fix) => (
           <div

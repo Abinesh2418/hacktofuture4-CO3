@@ -69,7 +69,7 @@ export function ReportInputPanel({ accent, onSubmit, onRunSample, submitting }: 
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <h3 style={{ color: accent, margin: 0, fontSize: 13, letterSpacing: 1 }}>
           RED TEAM REPORT INPUT
         </h3>
@@ -83,7 +83,7 @@ export function ReportInputPanel({ accent, onSubmit, onRunSample, submitting }: 
         spellCheck={false}
         style={{
           flex: 1,
-          minHeight: 220,
+          minHeight: 0,
           background: "#0d1117",
           color: "#f0f6fc",
           border: `1px solid ${parseError ? "#f85149" : "#30363d"}`,
@@ -92,8 +92,9 @@ export function ReportInputPanel({ accent, onSubmit, onRunSample, submitting }: 
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
           fontSize: 11,
           lineHeight: 1.5,
-          resize: "vertical",
+          resize: "none",
           outline: "none",
+          overflow: "auto",
         }}
       />
 
@@ -101,7 +102,7 @@ export function ReportInputPanel({ accent, onSubmit, onRunSample, submitting }: 
         <span style={{ color: "#f85149", fontSize: 11 }}>{parseError}</span>
       )}
 
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
         <button
           onClick={handleSubmit}
           disabled={submitting || !raw.trim()}

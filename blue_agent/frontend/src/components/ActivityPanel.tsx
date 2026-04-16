@@ -21,8 +21,10 @@ export function ActivityPanel({
         borderRadius: 8,
         padding: 12,
         border: `1px solid ${accent}55`,
-        height: "100%",
-        overflowY: "auto",
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
       }}
     >
       <header
@@ -32,6 +34,7 @@ export function ActivityPanel({
           marginBottom: 10,
           paddingBottom: 8,
           borderBottom: `1px solid ${accent}33`,
+          flexShrink: 0,
         }}
       >
         <h3 style={{ margin: 0, color: accent, fontSize: 14, letterSpacing: 1 }}>
@@ -41,11 +44,13 @@ export function ActivityPanel({
           {recent.length} tool calls
         </span>
       </header>
-      {recent.length === 0 ? (
-        <p style={{ color: "#8b949e", fontSize: 12 }}>No activity yet.</p>
-      ) : (
-        recent.map((call) => <ToolCard key={call.id} tool={call} accent={accent} />)
-      )}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {recent.length === 0 ? (
+          <p style={{ color: "#8b949e", fontSize: 12 }}>No activity yet.</p>
+        ) : (
+          recent.map((call) => <ToolCard key={call.id} tool={call} accent={accent} />)
+        )}
+      </div>
     </section>
   );
 }

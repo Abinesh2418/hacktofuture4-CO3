@@ -20,9 +20,10 @@ export function SSHScanPanel({ result, accent = "#58a6ff" }: SSHScanPanelProps) 
         borderRadius: 8,
         padding: 12,
         border: `1px solid ${accent}55`,
-        height: "100%",
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
+        overflow: "hidden",
       }}
     >
       <header
@@ -52,7 +53,7 @@ export function SSHScanPanel({ result, accent = "#58a6ff" }: SSHScanPanelProps) 
       )}
 
       {result?.success && (
-        <div style={{ overflowY: "auto", flex: 1, fontSize: 11 }}>
+        <div style={{ overflowY: "auto", flex: 1, minHeight: 0, fontSize: 11 }}>
           {/* OS */}
           {result.os_info && (
             <div style={{ marginBottom: 8 }}>

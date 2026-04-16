@@ -69,8 +69,7 @@ async def blue_log_stream(ws: WebSocket) -> None:
                 await ws.send_json({"type": "scan_stats", "payload": scan_stats})
                 await ws.send_json({"type": "heartbeat", "payload": {}})
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
         await manager.disconnect(ws)
-    except Exception:
-        await manager.disconnect(ws)
-        raise

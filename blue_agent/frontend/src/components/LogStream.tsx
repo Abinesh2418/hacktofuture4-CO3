@@ -34,9 +34,10 @@ export function LogStream({ logs, accent = "#58a6ff" }: LogStreamProps) {
         border: `1px solid ${accent}55`,
         borderRadius: 8,
         padding: 12,
-        height: "100%",
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
+        overflow: "hidden",
       }}
     >
       <header
@@ -46,6 +47,7 @@ export function LogStream({ logs, accent = "#58a6ff" }: LogStreamProps) {
           marginBottom: 8,
           paddingBottom: 6,
           borderBottom: `1px solid ${accent}33`,
+          flexShrink: 0,
         }}
       >
         <h3 style={{ margin: 0, color: accent, fontSize: 14, letterSpacing: 1 }}>
@@ -56,6 +58,7 @@ export function LogStream({ logs, accent = "#58a6ff" }: LogStreamProps) {
       <div
         style={{
           flex: 1,
+          minHeight: 0,
           overflowY: "auto",
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
           fontSize: 12,

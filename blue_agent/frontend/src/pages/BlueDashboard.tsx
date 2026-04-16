@@ -102,21 +102,25 @@ export function BlueDashboard() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        height: "100vh",
+        overflow: "hidden",
         background: "#0d1117",
         color: "#f0f6fc",
         padding: 20,
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        display: "flex",
+        flexDirection: "column",
+        boxSizing: "border-box",
       }}
     >
       {/* Header */}
-      <header style={{ paddingBottom: 12, marginBottom: 12, borderBottom: `1px solid ${ACCENT}55` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+      <header style={{ paddingBottom: 10, marginBottom: 10, borderBottom: `1px solid ${ACCENT}55`, flexShrink: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <div>
-            <h1 style={{ color: ACCENT, margin: 0, letterSpacing: 2, fontSize: 20 }}>
+            <h1 style={{ color: ACCENT, margin: 0, letterSpacing: 2, fontSize: 18 }}>
               BLUE TEAM // AUTONOMOUS DEFENDER
             </h1>
-            <p style={{ color: "#8b949e", margin: "4px 0 0", fontSize: 11 }}>
+            <p style={{ color: "#8b949e", margin: "2px 0 0", fontSize: 10 }}>
               Paste Red Team report &rarr; Auto-remediate &nbsp;|&nbsp; SSH scan &rarr; Fix plan &rarr; Apply
               &nbsp;&middot;&nbsp;ws:{" "}
               <span style={{ color: connected ? "#3fb950" : "#f85149" }}>
@@ -133,7 +137,7 @@ export function BlueDashboard() {
             gap: 8,
             alignItems: "center",
             background: "#161b22",
-            padding: "10px 14px",
+            padding: "8px 12px",
             borderRadius: 8,
             border: `1px solid ${ACCENT}33`,
             flexWrap: "wrap",
@@ -160,18 +164,21 @@ export function BlueDashboard() {
       </header>
 
       {/* Status bar */}
-      <StatusBar status={agentStatus} accent={ACCENT} />
+      <div style={{ flexShrink: 0 }}>
+        <StatusBar status={agentStatus} accent={ACCENT} />
+      </div>
 
-      {/* Main grid — two-row layout */}
-      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12, height: "calc(100vh - 230px)" }}>
+      {/* Main content — fixed height, two rows */}
+      <div style={{ marginTop: 10, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
 
-        {/* Row 1: Red Report Input + Remediation Results */}
+        {/* Row 1: Red Report Input + Remediation Results — fixed 45% */}
         <div
           style={{
             display: "grid",
             gridTemplateColumns: remediationResult ? "1fr 1fr" : "1fr",
-            gap: 12,
-            minHeight: remediationResult ? 340 : 300,
+            gap: 10,
+            height: "45%",
+            minHeight: 0,
           }}
         >
           <ReportInputPanel
@@ -186,15 +193,15 @@ export function BlueDashboard() {
         </div>
 
         {remediationError && (
-          <span style={{ color: "#f85149", fontSize: 12, padding: "0 4px" }}>{remediationError}</span>
+          <span style={{ color: "#f85149", fontSize: 11, flexShrink: 0 }}>{remediationError}</span>
         )}
 
-        {/* Row 2: SSH scan + Fix plan + Activity + Logs */}
+        {/* Row 2: SSH scan + Fix plan + Activity + Logs — fills remaining */}
         <div
           style={{
             display: "grid",
             gridTemplateColumns: hasVulnerabilities ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr",
-            gap: 12,
+            gap: 10,
             flex: 1,
             minHeight: 0,
           }}

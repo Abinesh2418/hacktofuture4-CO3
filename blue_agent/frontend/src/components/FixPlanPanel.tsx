@@ -26,9 +26,10 @@ export function FixPlanPanel({ result, applying, onApply, accent = "#58a6ff" }: 
         borderRadius: 8,
         padding: 12,
         border: `1px solid ${allFixed ? "#3fb95055" : "#f0883e55"}`,
-        height: "100%",
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
+        overflow: "hidden",
       }}
     >
       {/* Header */}
@@ -72,7 +73,7 @@ export function FixPlanPanel({ result, applying, onApply, accent = "#58a6ff" }: 
       </header>
 
       {/* Fix list */}
-      <div style={{ overflowY: "auto", flex: 1, fontSize: 11 }}>
+      <div style={{ overflowY: "auto", flex: 1, minHeight: 0, fontSize: 11 }}>
         {vulnerable.length === 0 && (
           <div style={{ color: "#3fb950", textAlign: "center", marginTop: 30, fontSize: 13 }}>
             No vulnerabilities found — server is clean.
