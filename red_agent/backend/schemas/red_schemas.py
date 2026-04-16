@@ -24,12 +24,12 @@ class ToolCall(BaseModel):
     status: ToolStatus = ToolStatus.PENDING
     params: dict[str, Any] = Field(default_factory=dict)
     result: dict[str, Any] | None = None
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=datetime.now)
     finished_at: datetime | None = None
 
 
 class LogEntry(BaseModel):
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=datetime.now)
     level: str = "INFO"
     message: str
     tool_id: str | None = None
@@ -107,5 +107,5 @@ class MissionStatus(BaseModel):
     id: str
     target: str
     phase: MissionPhase = MissionPhase.IDLE
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
     error: str | None = None

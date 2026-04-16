@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -57,11 +58,10 @@ async def red_log_stream(ws: WebSocket) -> None:
     """
     await manager.connect(ws)
     try:
-        # Replay recent state on connect so the UI can hydrate immediately.
-        for call in await red_service.recent_tool_calls(limit=20):
-            await ws.send_json({"type": "tool_call", "payload": call.model_dump(mode="json")})
-        for entry in await red_service.recent_logs(limit=50):
-            await ws.send_json({"type": "log", "payload": entry.model_dump(mode="json")})
+        # Wipe backend history so reload always starts clean
+        red_service.clear_history()
+        # Signal the frontend to clear all existing state (fresh session)
+        await ws.send_json({"type": "session_start", "payload": {"session_id": str(uuid.uuid4())}})
 
         while True:
             try:

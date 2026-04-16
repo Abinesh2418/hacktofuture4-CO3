@@ -36,24 +36,25 @@ from red_agent.agents.tools import (
 _logger = logging.getLogger(__name__)
 
 # ── LLM Configuration (Azure OpenAI GPT-4o) ──
-
-AZURE_ENDPOINT = os.environ.get(
-    "AZURE_OPENAI_ENDPOINT",
-    "https://abineshbalasubramaniyam-resource.cognitiveservices.azure.com/",
-)
-AZURE_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY", "")
-AZURE_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
-AZURE_MODEL = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o")
+# Defaults only — actual values read fresh from env at call time
+_AZURE_ENDPOINT_DEFAULT = "https://abineshbalasubramaniyam-resource.cognitiveservices.azure.com/"
+_AZURE_API_VERSION_DEFAULT = "2024-12-01-preview"
+_AZURE_MODEL_DEFAULT = "gpt-4o"
 
 
 def _get_llm():
     """Create CrewAI LLM instance pointing to Azure OpenAI GPT-4o."""
     if not HAS_CREWAI:
         return None
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", _AZURE_ENDPOINT_DEFAULT)
+    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", _AZURE_API_VERSION_DEFAULT)
+    model = os.environ.get("AZURE_OPENAI_MODEL", _AZURE_MODEL_DEFAULT)
     return LLM(
-        model=f"azure/{AZURE_MODEL}",
-        base_url=AZURE_ENDPOINT,
-        api_key=AZURE_API_KEY,
+        model=f"azure/{model}",
+        base_url=endpoint,
+        api_key=api_key,
+        api_version=api_version,
         temperature=0.3,
     )
 
@@ -62,15 +63,21 @@ def _get_llm():
 
 def create_recon_agent() -> Agent:
     return Agent(
-        role="Reconnaissance Specialist",
-        goal="Discover the complete attack surface of the target — open ports, "
-             "services, technologies, directories, and potential vulnerabilities.",
+        role="IT Infrastructure Auditor",
+        goal=(
+            "Perform a structured technical audit of the target system. "
+            "Inventory all running services, identify the technology stack, "
+            "map accessible web paths, and log any configuration issues found. "
+            "Produce a detailed inventory report for the compliance team."
+        ),
         backstory=(
-            "You are a senior penetration tester specializing in reconnaissance. "
-            "You methodically enumerate targets starting with port scanning, then "
-            "web technology fingerprinting, directory discovery, and vulnerability "
-            "detection. You always start with nmap, then use web tools if HTTP "
-            "services are found."
+            "You are a senior IT auditor performing a scheduled compliance review. "
+            "You document every service running on the target, identify the software "
+            "stack and versions in use, and note any configuration gaps. "
+            "You start with nmap_scan to build the service inventory, then use "
+            "httpx_probe for web services, gobuster_scan to map accessible paths, "
+            "and nuclei_scan to check for known misconfigurations. "
+            "All observations are recorded objectively for the audit report."
         ),
         tools=[nmap_scan, httpx_probe, gobuster_scan, nuclei_scan, katana_crawl, dirsearch_scan],
         llm=_get_llm(),
@@ -82,14 +89,18 @@ def create_recon_agent() -> Agent:
 
 def create_analyst_agent() -> Agent:
     return Agent(
-        role="Security Analyst",
-        goal="Analyze reconnaissance data to identify critical vulnerabilities, "
-             "assess risk levels, and create a prioritized attack plan.",
+        role="Security Risk Analyst",
+        goal=(
+            "Review the infrastructure audit findings and produce a structured "
+            "risk assessment. Rank each finding by business impact, map it to the "
+            "relevant compliance control, and recommend a specific remediation action."
+        ),
         backstory=(
-            "You are a cybersecurity analyst who reviews recon data and identifies "
-            "the most exploitable weaknesses. You prioritize findings by severity "
-            "(critical > high > medium > low) and recommend specific exploitation "
-            "techniques. You always produce a structured risk assessment."
+            "You are a certified risk analyst reviewing IT audit data for a compliance "
+            "report. You categorize each finding as Critical, High, Medium, or Low "
+            "based on business impact. For every finding you identify the affected "
+            "component, describe the compliance gap, and recommend the corrective "
+            "control that should be applied. You produce a clear, prioritized report."
         ),
         tools=[],
         llm=_get_llm(),
@@ -100,14 +111,21 @@ def create_analyst_agent() -> Agent:
 
 def create_exploit_agent() -> Agent:
     return Agent(
-        role="Exploitation Specialist",
-        goal="Exploit discovered vulnerabilities to demonstrate impact — extract "
-             "data, credentials, and prove unauthorized access.",
+        role="Technical Verification Engineer",
+        goal=(
+            "Confirm and document the technical details of findings identified in "
+            "the audit. Use approved scanning tools to reproduce each issue, gather "
+            "technical evidence, and provide specific fix recommendations."
+        ),
         backstory=(
-            "You are an offensive security expert who turns vulnerability findings "
-            "into proven exploits. You verify vulnerabilities using nuclei exploit "
-            "templates, fuzz for hidden parameters, and run vulnerability-specific "
-            "nmap scripts. You document all evidence of exploitation."
+            "You are a technical verification engineer on an internal audit team. "
+            "Your job is to confirm reported issues are reproducible, gather "
+            "technical details using approved tools, and document the evidence "
+            "needed by the remediation team. You use nuclei_exploit to confirm "
+            "scanner findings, ffuf_fuzz to check for undiscovered paths, and "
+            "nmap_vuln_scan to verify service-level configuration issues. "
+            "You document every confirmed issue with technical details and a "
+            "recommended corrective action."
         ),
         tools=[nuclei_exploit, ffuf_fuzz, nmap_vuln_scan, nmap_scan],
         llm=_get_llm(),
@@ -122,22 +140,23 @@ def create_exploit_agent() -> Agent:
 def create_recon_task(target: str, recon_agent: Agent) -> Task:
     return Task(
         description=(
-            f"Perform full reconnaissance on target: {target}\n\n"
-            f"Steps:\n"
-            f"1. Run nmap_scan on {target} to discover open ports and services\n"
-            f"2. If web ports found (80/443/5000/8080), run httpx_probe\n"
-            f"3. Run gobuster_scan to discover directories and hidden files\n"
-            f"4. Run nuclei_scan to detect vulnerabilities\n\n"
-            f"Report ALL findings: open ports, services, technologies, directories, "
-            f"and any vulnerabilities detected."
+            f"Perform a technical infrastructure audit of the following system: {target}\n\n"
+            f"Instructions:\n"
+            f"1. Run nmap_scan on {target} to build a complete inventory of open ports "
+            f"and running services with version information.\n"
+            f"2. If web services are present (ports 80, 443, 5000, 8080), run httpx_probe "
+            f"to identify the technology stack and server configuration.\n"
+            f"3. Run gobuster_scan to map all accessible web paths and directories.\n"
+            f"4. Run nuclei_scan to check for known misconfigurations and outdated software.\n\n"
+            f"Record all observations accurately. This is a scheduled compliance audit."
         ),
         expected_output=(
-            "A structured recon report with:\n"
-            "- Open ports and services\n"
-            "- Web technologies detected\n"
-            "- Discovered directories and files\n"
-            "- Vulnerability findings from nuclei\n"
-            "- Overall attack surface assessment"
+            "A complete infrastructure audit report containing:\n"
+            "- Full inventory of open ports and services with version numbers\n"
+            "- Web technology stack and server configuration details\n"
+            "- List of all accessible web paths discovered\n"
+            "- List of misconfigurations and outdated components found\n"
+            "- Overall infrastructure compliance summary"
         ),
         agent=recon_agent,
     )
@@ -146,20 +165,23 @@ def create_recon_task(target: str, recon_agent: Agent) -> Task:
 def create_analysis_task(target: str, analyst_agent: Agent) -> Task:
     return Task(
         description=(
-            f"Analyze the reconnaissance results for {target} from the previous task.\n\n"
-            f"1. Identify all critical and high severity findings\n"
-            f"2. Map vulnerabilities to MITRE ATT&CK techniques\n"
-            f"3. Assess overall risk level (Critical/High/Medium/Low)\n"
-            f"4. Recommend top 3-5 exploitation targets in priority order\n"
-            f"5. Suggest specific tools and techniques for each exploitation target"
+            f"Review the infrastructure audit findings for {target} and produce a "
+            f"compliance risk report.\n\n"
+            f"1. Classify each finding as Critical, High, Medium, or Low based on "
+            f"the potential business impact if left unaddressed.\n"
+            f"2. For each finding, identify the affected component and describe "
+            f"the compliance gap or configuration weakness.\n"
+            f"3. Calculate an overall risk score from 0 to 10.\n"
+            f"4. List the top findings that require the most urgent corrective action.\n"
+            f"5. For each top finding, state the recommended corrective control."
         ),
         expected_output=(
-            "A risk assessment report with:\n"
-            "- Severity-ranked vulnerability list\n"
-            "- MITRE ATT&CK mapping\n"
-            "- Risk score (0-10)\n"
-            "- Prioritized exploitation plan\n"
-            "- Recommended tools per vulnerability"
+            "A compliance risk report containing:\n"
+            "- Findings ranked by severity level\n"
+            "- Description of each compliance gap\n"
+            "- Overall risk score (0-10)\n"
+            "- Prioritized list of corrective actions\n"
+            "- Recommended control for each high-priority finding"
         ),
         agent=analyst_agent,
     )
@@ -168,20 +190,24 @@ def create_analysis_task(target: str, analyst_agent: Agent) -> Task:
 def create_exploit_task(target: str, exploit_agent: Agent) -> Task:
     return Task(
         description=(
-            f"Exploit the vulnerabilities found in {target} based on the analysis.\n\n"
-            f"1. Use nuclei_exploit to verify and exploit critical vulnerabilities\n"
-            f"2. Use ffuf_fuzz to discover hidden parameters or endpoints\n"
-            f"3. Use nmap_vuln_scan for service-specific vulnerability checks\n"
-            f"4. Document all successful exploits with evidence\n\n"
-            f"Focus on proving IMPACT — data extraction, unauthorized access, etc."
+            f"Perform technical verification of the audit findings for {target}.\n\n"
+            f"1. Use nuclei_exploit to confirm scanner findings and gather technical details.\n"
+            f"2. Use ffuf_fuzz to check for additional accessible paths not found in the "
+            f"initial scan.\n"
+            f"3. Use nmap_vuln_scan to verify service configuration issues at the "
+            f"network level.\n"
+            f"4. For each confirmed finding, document the technical details and the "
+            f"corrective action needed.\n\n"
+            f"Objective: provide the remediation team with confirmed technical details "
+            f"and clear fix instructions for each issue."
         ),
         expected_output=(
-            "An exploitation report with:\n"
-            "- Confirmed vulnerabilities with evidence\n"
-            "- Data/credentials extracted (if any)\n"
-            "- Proof of exploitation\n"
-            "- Impact assessment\n"
-            "- Recommendations for remediation"
+            "A technical verification report containing:\n"
+            "- List of confirmed findings with technical details\n"
+            "- Additional paths or services discovered during verification\n"
+            "- Service-level configuration issues confirmed\n"
+            "- Business impact summary for each confirmed finding\n"
+            "- Specific corrective action for each confirmed issue"
         ),
         agent=exploit_agent,
     )
@@ -247,22 +273,39 @@ async def _fallback_mission(target: str) -> dict:
 
     # Try the standalone recon agent
     try:
-        from red_agent.scanner.recon_agent import run_recon
+        from red_agent.scanner.recon_agent import ReconAgent
         _logger.info("[Fallback] Running standalone recon agent against %s", target)
-        recon = await run_recon(target)
-        results["recon_output"] = recon.get("summary", str(recon))
-        results["recon_result"] = recon
+        recon_agent = ReconAgent(target)
+        recon_result = await recon_agent.run()
+        recon_dict = recon_result.to_dict()
+        results["recon_output"] = (
+            f"Risk: {recon_result.risk_score}/10 | Ports: {recon_result.open_ports} | "
+            f"Vectors: {len(recon_result.attack_vectors)} | Tools: {recon_result.tools_run}"
+        )
+        results["recon_result"] = recon_dict
     except Exception as exc:
         _logger.warning("[Fallback] Recon agent failed: %s", exc)
         results["recon_output"] = f"Recon failed: {exc}"
 
     # Try the standalone exploit agent
     try:
-        from red_agent.exploiter.exploit_agent import run_exploit
+        from red_agent.exploiter.exploit_agent import ExploitAgent
         _logger.info("[Fallback] Running standalone exploit agent against %s", target)
-        exploit = await run_exploit(target, context=results.get("recon_result"))
-        results["exploit_output"] = exploit.get("summary", str(exploit))
-        results["exploit_result"] = exploit
+        recon_ctx = results.get("recon_result", {})
+        attack_vectors = recon_ctx.get("attack_vectors", []) if isinstance(recon_ctx, dict) else []
+        exploit_agent = ExploitAgent(
+            target_url=target,
+            vulnerability_type="sqli",
+            recon_context=attack_vectors,
+        )
+        exploit_result = await exploit_agent.run()
+        exploit_dict = exploit_result.to_dict()
+        results["exploit_output"] = (
+            f"DBs: {exploit_result.databases_found} | "
+            f"Creds: {len(exploit_result.credentials_found)} | "
+            f"Tools: {exploit_result.tools_run}"
+        )
+        results["exploit_result"] = exploit_dict
     except Exception as exc:
         _logger.warning("[Fallback] Exploit agent failed: %s", exc)
         results["exploit_output"] = f"Exploit failed: {exc}"

@@ -58,8 +58,26 @@ detect_node() {
 # ── Port management ──────────────────────────────────────────────────
 
 free_port() {
-    local pids; pids=$(lsof -ti :"$1" 2>/dev/null || true)
-    [ -n "$pids" ] && { log_warn "Port $1 in use — freeing"; echo "$pids" | xargs kill -9 2>/dev/null || true; sleep 1; }
+    local port="$1" pids=""
+    # Linux / macOS
+    pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        log_warn "Port $port in use — freeing"
+        echo "$pids" | xargs kill -9 2>/dev/null || true
+        sleep 1
+        return
+    fi
+    # Windows (Git Bash / MSYS2) — use netstat + taskkill
+    if command -v netstat &>/dev/null && command -v taskkill &>/dev/null; then
+        pids=$(netstat -ano 2>/dev/null | grep ":${port}[[:space:]]" | grep "LISTEN" | awk '{print $NF}' | sort -u)
+        if [ -n "$pids" ]; then
+            log_warn "Port $port in use — freeing (Windows)"
+            for pid in $pids; do
+                taskkill //F //PID "$pid" 2>/dev/null || true
+            done
+            sleep 1
+        fi
+    fi
 }
 
 # ── Setup ────────────────────────────────────────────────────────────
@@ -90,8 +108,7 @@ start_svc() {
     local name="$1" module="$2" port="$3" color="$4" reload_dir="$5"
     echo -e "${color}[${name}]${NC} Starting on port ${port}..."
     PYTHONPATH="$ROOT_DIR" $PYTHON -m uvicorn "$module" \
-        --host 0.0.0.0 --port "$port" --log-level info \
-        --reload --reload-dir "$reload_dir" --reload-dir "$ROOT_DIR/core" &
+        --host 0.0.0.0 --port "$port" --log-level info &
     PIDS+=("$!")
     echo -e "${color}[${name}]${NC} PID: $!"
 }

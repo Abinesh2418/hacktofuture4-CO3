@@ -22,4 +22,14 @@ export const blueApi = {
     client.post("/scan/ssh", creds).then(r => r.data),
   sshApplyFixes: () =>
     client.post("/scan/ssh/apply-fixes").then(r => r.data),
+  // IDS
+  idsStatus: () =>
+    client.get("/ids/status").then(r => r.data),
+  idsAlerts: (limit = 50) =>
+    client.get(`/ids/alerts?limit=${limit}`).then(r => r.data),
+  // SIEM
+  siemReport: () =>
+    client.get("/siem/report").then(r => r.data),
+  siemStatus: () =>
+    client.get("/siem/status").then(r => r.data),
 };

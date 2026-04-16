@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -49,11 +50,10 @@ async def blue_log_stream(ws: WebSocket) -> None:
     """Streams {type, payload} envelopes to the Blue dashboard in real-time."""
     await manager.connect(ws)
     try:
-        # Send existing history on connect
-        for call in await blue_service.recent_tool_calls(limit=50):
-            await ws.send_json({"type": "tool_call", "payload": call.model_dump(mode="json")})
-        for entry in await blue_service.recent_logs(limit=100):
-            await ws.send_json({"type": "log", "payload": entry.model_dump(mode="json")})
+        # Wipe backend history so reload always starts clean
+        blue_service.clear_history()
+        # Signal the frontend to clear all existing state (fresh session)
+        await ws.send_json({"type": "session_start", "payload": {"session_id": str(uuid.uuid4())}})
 
         # Periodic status updates
         tick = 0

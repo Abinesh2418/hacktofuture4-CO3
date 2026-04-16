@@ -52,7 +52,7 @@ async def award_points(body: AwardRequest) -> dict:
         "team": team,
         "points": body.points,
         "reason": body.reason,
-        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "timestamp": datetime.datetime.now().isoformat(),
     }
     history.appendleft(entry)
 

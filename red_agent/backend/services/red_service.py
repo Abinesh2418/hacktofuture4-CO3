@@ -63,6 +63,12 @@ _attack_planner = AttackPlanner()
 _attack_evolver = AttackEvolver()
 
 
+def clear_history() -> None:
+    """Wipe accumulated log and tool-call history on fresh client connection."""
+    _LOG_HISTORY.clear()
+    _TOOL_HISTORY.clear()
+
+
 def _new_tool_call(name: str, category: str, params: dict[str, Any]) -> ToolCall:
     return ToolCall(
         id=str(uuid.uuid4()),
@@ -76,7 +82,7 @@ def _new_tool_call(name: str, category: str, params: dict[str, Any]) -> ToolCall
 def _finish(call: ToolCall, result: dict[str, Any], status: ToolStatus = ToolStatus.DONE) -> ToolCall:
     call.status = status
     call.result = result
-    call.finished_at = datetime.utcnow()
+    call.finished_at = datetime.now()
     _TOOL_HISTORY.append(call)
     _LOG_HISTORY.append(
         LogEntry(

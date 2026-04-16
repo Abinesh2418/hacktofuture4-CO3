@@ -13,36 +13,40 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from project root explicitly so the key is always found
+_env_path = Path(__file__).resolve().parents[3] / ".env"
+load_dotenv(_env_path, override=True)
 
 _logger = logging.getLogger(__name__)
 
-# ── Azure OpenAI Configuration ──
-AZURE_ENDPOINT = os.environ.get(
-    "AZURE_OPENAI_ENDPOINT",
-    "https://abineshbalasubramaniyam-resource.cognitiveservices.azure.com/",
-)
-AZURE_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY", "")
-AZURE_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
-AZURE_MODEL = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o")
+# ── Azure OpenAI Configuration (read fresh each call via _get_client) ──
+AZURE_ENDPOINT = "https://abineshbalasubramaniyam-resource.cognitiveservices.azure.com/"
+AZURE_API_VERSION = "2024-12-01-preview"
+AZURE_MODEL = "gpt-4o"
 
 # Red team system prompt
-RED_AGENT_SYSTEM_PROMPT = """You are an autonomous red team AI agent specializing in offensive security.
-Your role is to analyze reconnaissance data, identify vulnerabilities, plan attack strategies, and generate security assessment reports.
-Think step-by-step and provide actionable, structured output. Be concise and technical."""
+RED_AGENT_SYSTEM_PROMPT = """You are an AI assistant for an authorized IT security compliance team.
+Your role is to analyze infrastructure audit data, assess configuration risks, and generate structured compliance reports.
+Think step-by-step and provide clear, technical, actionable output."""
 
 
 def _get_client():
-    """Create Azure OpenAI client (lazy import to avoid startup failures)."""
+    """Create Azure OpenAI client — reads API key fresh from env each call."""
     from openai import AzureOpenAI
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", AZURE_ENDPOINT)
+    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", AZURE_API_VERSION)
+    if not api_key:
+        raise ValueError("AZURE_OPENAI_API_KEY is not set in .env")
     return AzureOpenAI(
-        api_version=AZURE_API_VERSION,
-        azure_endpoint=AZURE_ENDPOINT,
-        api_key=AZURE_API_KEY,
+        api_version=api_version,
+        azure_endpoint=endpoint,
+        api_key=api_key,
     )
 
 
@@ -64,7 +68,7 @@ async def chat(
     def _sync_call():
         client = _get_client()
         resp = client.chat.completions.create(
-            model=AZURE_MODEL,
+            model=os.environ.get("AZURE_OPENAI_MODEL", AZURE_MODEL),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
@@ -122,7 +126,7 @@ async def tool_call(
     def _sync_call():
         client = _get_client()
         kwargs = {
-            "model": model or AZURE_MODEL,
+            "model": model or os.environ.get("AZURE_OPENAI_MODEL", AZURE_MODEL),
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,

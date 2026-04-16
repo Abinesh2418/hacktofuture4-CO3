@@ -20,9 +20,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from blue_agent.backend.routers import (
     defense_routes,
     environment_routes,
+    ids_routes,
     patch_routes,
     remediation_routes,
     scan_routes,
+    siem_routes,
     strategy_routes,
 )
 from blue_agent.backend.websocket import blue_ws
@@ -46,7 +48,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_origins=["http://localhost:3002", "http://localhost:5173", "http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,6 +60,8 @@ app.include_router(strategy_routes.router, prefix="/strategy", tags=["strategy"]
 app.include_router(scan_routes.router, prefix="/scan", tags=["scan"])
 app.include_router(environment_routes.router, prefix="/environment", tags=["environment"])
 app.include_router(remediation_routes.router, prefix="/remediate", tags=["remediation"])
+app.include_router(ids_routes.router, prefix="/ids", tags=["ids"])
+app.include_router(siem_routes.router, prefix="/siem", tags=["siem"])
 app.include_router(blue_ws.router, tags=["websocket"])
 
 

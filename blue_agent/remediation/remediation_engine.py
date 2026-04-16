@@ -90,13 +90,17 @@ class RemediationEngine:
         self.findings_log: List[Dict[str, Any]] = []
         self._running: bool = False
         self._pending_fixes: List[Dict[str, Any]] = []
+        self._registered: bool = False
 
     # ------------------------------------------------------------------
     # Subscription wiring
     # ------------------------------------------------------------------
 
     def register(self) -> None:
-        """Subscribe to Red team findings on the EventBus."""
+        """Subscribe to Red team findings on the EventBus (idempotent)."""
+        if self._registered:
+            return
+        self._registered = True
         event_bus.subscribe("red_finding_received", self._on_finding)
         event_bus.subscribe("red_report_complete", self._on_report_complete)
         ts = _ts()
@@ -323,21 +327,93 @@ class RemediationEngine:
     async def remediate_full_report(self, report: Dict[str, Any]) -> Dict[str, Any]:
         """Process a full Red team report and queue all fixes for approval.
 
-        This is the synchronous alternative to the EventBus-driven flow.
-        Can be called directly from the API endpoint.  Findings will be
-        published via the EventBus and queued in _pending_fixes.
+        Populates _pending_fixes synchronously by parsing the report directly —
+        no event-bus queue timing dependency. Also emits streaming events for
+        the dashboard.
         """
-        from red_agent.report_ingester import ingest_report
+        from red_agent.report_ingester import parse_report
 
-        # Start the EventBus-driven flow — findings will be published
-        # and this engine's _on_finding handler will queue them for approval
-        summary = await ingest_report(report)
+        target = report.get("target", "unknown")
+        risk_score = report.get("risk_score", 0.0)
 
-        # Wait a moment for all async event handlers to complete
-        await asyncio.sleep(1.0)
+        findings = parse_report(report)
+        print(f"{_ts()} < remediation_engine: parse_report returned {len(findings)} findings")
+
+        severity_counts: Dict[str, int] = {
+            "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0
+        }
+
+        # Build pending_list DIRECTLY in the loop — no separate state read needed
+        pending_list: List[Dict[str, Any]] = []
+
+        for finding in findings:
+            category = finding.get("category", "")
+            severity = finding.get("severity", "medium")
+            description = finding.get("description", "")
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+
+            self.findings_received += 1
+            self.findings_log.append(finding)
+
+            print(
+                f"{_ts()} < remediation_engine: [{severity.upper()}] {category} — "
+                f"{description[:60]}"
+            )
+
+            # Emit for real-time dashboard streaming (non-blocking)
+            await event_bus.emit("remediation_started", {
+                "finding_id": finding.get("id", ""),
+                "category": category,
+                "severity": severity,
+            })
+
+            # Queue fix for approval directly — guaranteed, no timing race
+            fix_method_name = _CATEGORY_TO_FIX.get(category)
+            if fix_method_name:
+                fix_id = str(uuid.uuid4())
+                endpoint = finding.get("endpoint", "")
+                internal_entry: Dict[str, Any] = {
+                    "fix_id": fix_id,
+                    "category": category,
+                    "severity": severity,
+                    "description": description,
+                    "endpoint": endpoint or None,
+                    "fix_method_name": fix_method_name,
+                    "finding": finding,
+                    "status": "pending_approval",
+                }
+                self._pending_fixes.append(internal_entry)
+                # Build the API-facing dict in the same step — no second pass needed
+                pending_list.append({
+                    "fix_id": fix_id,
+                    "category": category,
+                    "severity": severity,
+                    "description": description,
+                    "endpoint": endpoint or None,
+                    "status": "pending_approval",
+                    "finding_details": finding,
+                })
+                print(
+                    f"{_ts()} < remediation_engine: Queued {fix_method_name} "
+                    f"({fix_id[:8]}...) for approval"
+                )
+            else:
+                print(f"{_ts()} < remediation_engine: No fix mapped for '{category}'")
+
+        summary = {
+            "target": target,
+            "risk_score": risk_score,
+            "total_findings": len(findings),
+            "severity_counts": severity_counts,
+            "findings_published": len(findings),
+        }
+        await event_bus.emit("red_report_complete", summary)
+
+        print(f"{_ts()} < remediation_engine: {len(pending_list)} fixes queued for approval — returning pending_fixes_list")
 
         return {
             "report_summary": summary,
+            "pending_fixes_list": pending_list,
             "remediation": {
                 "findings_received": self.findings_received,
                 "fixes_applied": self.fixes_dispatched,

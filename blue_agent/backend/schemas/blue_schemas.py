@@ -23,12 +23,12 @@ class ToolCall(BaseModel):
     status: ToolStatus = ToolStatus.PENDING
     params: Dict[str, Any] = Field(default_factory=dict)
     result: Optional[Dict[str, Any]] = None
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=datetime.now)
     finished_at: Optional[datetime] = None
 
 
 class LogEntry(BaseModel):
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=datetime.now)
     level: str = "INFO"
     message: str
     tool_id: Optional[str] = None
@@ -234,6 +234,7 @@ class RemediationResult(BaseModel):
     total_steps: int = 0
     severity_counts: Dict[str, int] = Field(default_factory=dict)
     applied_fixes: List[Dict[str, Any]] = Field(default_factory=list)
+    pending_fixes: List[Dict[str, Any]] = Field(default_factory=list)
     status: str = "complete"
 
 

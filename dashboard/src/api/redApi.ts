@@ -15,5 +15,7 @@ export const redApi = {
   exploitStatus: (eid: string) =>
     client.get(`/exploit/auto/${eid}`).then(r => r.data),
   downloadReport: (sid: string) =>
-    client.get(`/report/download/${sid}`).then(r => r.data),
+    client.get(`/report/download/${sid}`, { responseType: "blob" }).then(r => r.data),
+  listReconSessions: () =>
+    client.get("/scan/recon/sessions").then(r => r.data).catch(() => []),
 };

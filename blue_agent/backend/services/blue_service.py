@@ -40,6 +40,8 @@ from blue_agent.environment.environment_manager import EnvironmentManager
 from blue_agent.strategy.defense_evolver import DefenseEvolver
 from blue_agent.strategy.defense_planner import DefensePlanner
 from blue_agent.remediation.remediation_engine import RemediationEngine
+from blue_agent.ids.ids_engine import IDSEngine
+from blue_agent.siem.siem_engine import SIEMEngine
 
 _TOOL_HISTORY: Deque[ToolCall] = deque(maxlen=200)
 _LOG_HISTORY: Deque[LogEntry] = deque(maxlen=500)
@@ -50,6 +52,8 @@ _environment_manager = EnvironmentManager()
 _defense_planner = DefensePlanner()
 _defense_evolver = DefenseEvolver()
 _remediation_engine = RemediationEngine()
+_ids_engine = IDSEngine()
+_siem_engine = SIEMEngine()
 
 # ---------------------------------------------------------------------------
 # Real-time broadcast bridge — WebSocket registers its callback here
@@ -62,6 +66,14 @@ def set_broadcast_callback(cb: Callable) -> None:
     """Called by blue_ws.py to register the WebSocket broadcast function."""
     global _broadcast_cb
     _broadcast_cb = cb
+    _ids_engine.set_broadcast(cb)
+    _siem_engine.set_broadcast(cb)
+
+
+def clear_history() -> None:
+    """Wipe accumulated log and tool-call history on fresh client connection."""
+    _LOG_HISTORY.clear()
+    _TOOL_HISTORY.clear()
 
 
 def _broadcast(payload: dict) -> None:
@@ -99,7 +111,7 @@ def _new_tool_call(name: str, category: str, params: Dict[str, Any]) -> ToolCall
 def _finish(call: ToolCall, result: Dict[str, Any], status: ToolStatus = ToolStatus.DONE) -> ToolCall:
     call.status = status
     call.result = result
-    call.finished_at = datetime.utcnow()
+    call.finished_at = datetime.now()
     add_log(
         f"{call.name} -> {status.value}" + (f" | {result.get('detail', '')}" if result.get('detail') else ""),
         level="INFO" if status is ToolStatus.DONE else "ERROR",
@@ -345,6 +357,8 @@ async def ingest_red_report(report: RedReportRequest) -> RemediationResult:
     # Ensure event bus is running for the remediation pipeline
     await event_bus.start()
     _remediation_engine.register()
+    _ids_engine.register()
+    _siem_engine.register()
 
     call = _new_tool_call("ingest_red_report", "remediation", {
         "target": report.target,
@@ -365,6 +379,10 @@ async def ingest_red_report(report: RedReportRequest) -> RemediationResult:
         "status": "complete",
     })
 
+    # Use the fix list built directly inside remediate_full_report (no state-read gap)
+    pending = result.get("pending_fixes_list", [])
+    print(f"[blue_service] ingest_red_report: pending_fixes_list has {len(pending)} items")
+
     return RemediationResult(
         target=report.target,
         risk_score=report.risk_score,
@@ -373,6 +391,7 @@ async def ingest_red_report(report: RedReportRequest) -> RemediationResult:
         total_steps=remediation.get("total_steps", 0),
         severity_counts=report_summary.get("severity_counts", {}),
         applied_fixes=remediation.get("applied_fixes", []),
+        pending_fixes=pending,
         status="complete",
     )
 
@@ -390,3 +409,23 @@ async def get_remediation_status() -> RemediationStatus:
     """Get current status of the remediation engine."""
     status = _remediation_engine.get_status()
     return RemediationStatus(**status)
+
+
+# ── IDS endpoints ────────────────────────────────────────────────────
+
+def get_ids_status() -> dict:
+    return _ids_engine.get_status()
+
+
+def get_ids_alerts(limit: int = 50) -> list:
+    return _ids_engine.get_alerts(limit=limit)
+
+
+# ── SIEM endpoints ───────────────────────────────────────────────────
+
+def get_siem_report() -> dict:
+    return _siem_engine.get_report()
+
+
+def get_siem_status() -> dict:
+    return _siem_engine.get_status()

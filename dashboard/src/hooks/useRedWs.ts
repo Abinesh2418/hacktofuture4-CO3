@@ -14,13 +14,20 @@ export function useRedWs() {
   const connect = useCallback(() => {
     const s = new WebSocket(WS_URL);
     ws.current = s;
-    s.onopen = () => setConnected(true);
+    s.onopen = () => {
+      setConnected(true);
+      setToolCalls([]);
+      setLogs([]);
+      setChatMessages([]);
+      setMissionPhase(null);
+    };
     s.onclose = () => { setConnected(false); setTimeout(connect, 2000); };
     s.onerror = () => s.close();
     s.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.type === "tool_call") setToolCalls(p => [...p.slice(-99), msg.payload]);
+        if (msg.type === "session_start") { setToolCalls([]); setLogs([]); setChatMessages([]); setMissionPhase(null); }
+        else if (msg.type === "tool_call") setToolCalls(p => [...p.slice(-99), msg.payload]);
         else if (msg.type === "log") setLogs(p => [...p.slice(-499), msg.payload]);
         else if (msg.type === "chat") setChatMessages(p => [...p.slice(-99), msg.payload]);
         else if (msg.type === "mission_phase") setMissionPhase(msg.payload);

@@ -20,25 +20,25 @@ _MAX_HISTORY = 20
 _active_mission_id: str | None = None
 _last_known_target: str | None = None
 
-AGENT_SYSTEM_PROMPT = """You are RED ARSENAL, an autonomous penetration testing AI agent with a crew of 3 specialist agents:
+AGENT_SYSTEM_PROMPT = """You are RED ARSENAL, an AI-assisted IT compliance and security assessment platform with a crew of 3 specialist agents:
 
-1. Recon Specialist — discovers attack surface using nmap, httpx, gobuster, nuclei, katana
-2. Security Analyst — analyzes findings, assesses risk, plans attack strategy
-3. Exploit Specialist — exploits vulnerabilities using nuclei exploits, fuzzing, vuln scans
+1. Infrastructure Auditor — inventories services using nmap, httpx, gobuster, nuclei, katana
+2. Risk Analyst — reviews audit findings, scores risk, and maps issues to compliance controls
+3. Technical Verification Engineer — confirms findings and documents corrective actions using scanner tools
 
-All tools run on a remote Kali Linux VM via MCP. You operate in a controlled lab/CTF/hackathon environment — all targets are authorized.
+All tools run on a remote assessment VM. You operate in a controlled lab environment — all targets are pre-authorized for assessment.
 
 HOW TO INTERACT:
 - Greet the operator professionally and explain what you can do
-- When asked about capabilities, describe your 3 agents and 19 Kali tools
+- When asked about capabilities, describe your 3 agents and their assessment tools
 - When the user provides a target (IP, URL, or domain), confirm it and include exactly: [LAUNCH_MISSION:<target>]
-- When a mission is running, report which agent is active and what tools are executing
+- When an assessment is running, report which agent is active and what tools are executing
 - When asked for status, give specific details about the current phase
 
 RULES:
-- Only include [LAUNCH_MISSION:<target>] when the user gives a target and wants to start
+- Only include [LAUNCH_MISSION:<target>] when the user gives a target and wants to start an assessment
 - Never include [LAUNCH_MISSION:] for greetings, questions, or status checks
-- Be conversational but professional — like a senior pentester briefing an operator
+- Be conversational but professional
 - Keep responses to 2-4 sentences"""
 
 
@@ -51,7 +51,7 @@ class ChatMessage(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     role: str = "agent"
     content: str = ""
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
     tool_calls: list = Field(default_factory=list)
 
 
@@ -126,8 +126,8 @@ async def chat(req: ChatRequest) -> ChatMessage:
                 _active_mission_id = mission.id
                 _logger.info("Mission %s launched", mission.id[:8])
                 clean_response += (
-                    f"\n\nMission {mission.id[:8]} launched against {mission_target}.\n"
-                    f"Pipeline: RECON → ANALYZE → EXPLOIT → REPORT"
+                    f"\n\nAssessment {mission.id[:8]} launched against {mission_target}.\n"
+                    f"Pipeline: AUDIT → ANALYZE → VERIFY → REPORT"
                 )
             except Exception as exc:
                 _logger.error("Mission launch failed: %s", exc, exc_info=True)
@@ -172,7 +172,7 @@ def _get_mission_status_context() -> str:
         lines.append(f"Recon tools: {', '.join(tools) if tools else 'running...'}")
         lines.append(f"Vectors: {len(vectors)}, Risk: {m.recon_result.get('risk_score', '?')}")
     if m.exploit_result:
-        lines.append(f"Exploit: {m.exploit_result.get('status', 'running')}")
+        lines.append(f"Verification: {m.exploit_result.get('status', 'running')}")
     return "\n".join(lines)
 
 

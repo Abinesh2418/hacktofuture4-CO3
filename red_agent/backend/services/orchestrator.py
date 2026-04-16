@@ -31,7 +31,7 @@ class Mission:
     id: str
     target: str
     phase: MissionPhase = MissionPhase.IDLE
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     recon_output: str = ""
     analysis_output: str = ""
     exploit_output: str = ""
@@ -184,7 +184,7 @@ class MissionOrchestrator:
                           status: ToolStatus = ToolStatus.DONE) -> None:
         tc.status = status
         tc.result = result
-        tc.finished_at = datetime.utcnow()
+        tc.finished_at = datetime.now()
 
     async def _emit_tool_call_ws(self, tc: ToolCall) -> None:
         from red_agent.backend.websocket.red_ws import manager
@@ -201,7 +201,7 @@ class MissionOrchestrator:
             "type": "chat_response",
             "payload": {
                 "id": str(uuid.uuid4()), "role": "agent", "content": content,
-                "timestamp": datetime.utcnow().isoformat(), "tool_calls": [],
+                "timestamp": datetime.now().isoformat(), "tool_calls": [],
             },
         })
 

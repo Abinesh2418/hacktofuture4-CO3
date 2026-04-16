@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker-compose -f docker-compose-blue.yml up --build)",
+      "Bash(docker-compose -f docker-compose-blue.yml build --no-cache blue-backend)",
+      "Bash(docker-compose -f docker-compose-blue.yml up -d blue-backend)",
+      "Bash(docker exec *)",
+      "Bash(docker restart *)"
+    ]
+  }
+}
