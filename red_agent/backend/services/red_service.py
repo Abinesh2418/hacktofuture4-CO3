@@ -21,6 +21,12 @@ from red_agent.scanner.recon_agent import (
     list_sessions as _list_sessions,
     run_recon_session,
 )
+from red_agent.exploiter.exploit_agent import (
+    run_exploit_session as _run_exploit,
+    get_exploit_result as _get_exploit_result,
+    list_exploit_sessions as _list_exploit_sessions,
+    ExploitAgentResult,
+)
 
 from red_agent.backend.schemas.red_schemas import (
     CVELookupRequest,
@@ -220,21 +226,67 @@ def _ensure_recon_subscriptions() -> None:
 
 
 async def _on_recon_complete(data: dict) -> None:
+    session_id = data.get("session_id", "")
+    vectors = data.get("attack_vectors") or []
+    risk = data.get("risk_score", 0)
+    target = data.get("target", "")
+
     _logger.info(
         "[RedService] recon complete session=%s risk=%s vectors=%s",
-        data.get("session_id"),
-        data.get("risk_score"),
-        len(data.get("attack_vectors") or []),
+        session_id, risk, len(vectors),
     )
     _LOG_HISTORY.append(
-        LogEntry(
-            level="INFO",
-            message=(
-                f"recon complete: {data.get('session_id')} "
-                f"risk={data.get('risk_score')}"
-            ),
-        )
+        LogEntry(level="INFO", message=f"recon complete: {session_id} risk={risk}")
     )
+
+    # AUTO-TRIGGER: if recon found exploitable vulns, start exploit agent
+    exploit_keywords = ("sql", "sqli", "injection", "lfi", "rce", "traversal", "xss", "command")
+    exploitable = [
+        v for v in vectors
+        if isinstance(v, dict) and any(
+            kw in (v.get("type", "") + v.get("evidence", "")).lower()
+            for kw in exploit_keywords
+        )
+    ]
+
+    if not exploitable:
+        _logger.info("[RedService] no exploitable vectors found — skipping auto-exploit")
+        return
+
+    # Determine exploit target — use highest priority vector's path
+    best_vector = sorted(
+        exploitable,
+        key=lambda v: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(v.get("priority", "low"), 4),
+    )[0]
+
+    exploit_target = best_vector.get("path", "")
+    if exploit_target and not exploit_target.startswith("http"):
+        exploit_target = target.rstrip("/") + exploit_target
+
+    # Determine vuln type
+    vuln_type = "sqli" if "sql" in best_vector.get("type", "").lower() else best_vector.get("type", "unknown")
+
+    _logger.info(
+        "[RedService] AUTO-EXPLOIT: %s on %s (from %d vectors)",
+        vuln_type, exploit_target, len(exploitable),
+    )
+    _LOG_HISTORY.append(
+        LogEntry(level="INFO", message=f"AUTO-EXPLOIT: {vuln_type} found, attacking {exploit_target}")
+    )
+
+    try:
+        exploit_id = await _run_exploit(
+            target_url=exploit_target or target,
+            recon_session_id=session_id,
+            vulnerability_type=vuln_type,
+            recon_context=exploitable,
+        )
+        _logger.info("[RedService] exploit agent started: %s", exploit_id)
+        _LOG_HISTORY.append(
+            LogEntry(level="INFO", message=f"exploit started: {exploit_id} (auto-triggered by recon)")
+        )
+    except Exception as exc:
+        _logger.error("[RedService] auto-exploit failed to start: %s", exc)
 
 
 async def _on_recon_failed(data: dict) -> None:
