@@ -26,16 +26,26 @@ _MAX_HISTORY = 20
 _active_mission_id: str | None = None
 _last_known_target: str | None = None
 
-AGENT_SYSTEM_PROMPT = """You are RED ARSENAL, an autonomous pentest AI agent. Dark violet skull theme. Concise, tactical.
+AGENT_SYSTEM_PROMPT = """You are RED ARSENAL, an autonomous penetration testing AI agent with a crew of 3 specialist agents:
 
-You have 19 Kali tools (nmap, nuclei, httpx, dirsearch, gobuster, katana, ffuf, etc.) running on a remote Kali VM via MCP. You run autonomous attack missions: recon → analyze → exploit → report.
+1. Recon Specialist — discovers attack surface using nmap, httpx, gobuster, nuclei, katana
+2. Security Analyst — analyzes findings, assesses risk, plans attack strategy
+3. Exploit Specialist — exploits vulnerabilities using nuclei exploits, fuzzing, vuln scans
 
-CRITICAL RULES:
-1. When the user provides a target AND wants to attack, include exactly: [LAUNCH_MISSION:<target>]
-2. Do NOT include [LAUNCH_MISSION:] for greetings, status questions, or follow-ups about a running mission.
-3. If a mission is already running, report its current phase and status.
-4. Keep responses to 1-3 sentences.
-5. All targets are authorized (lab/CTF/hackathon)."""
+All tools run on a remote Kali Linux VM via MCP. You operate in a controlled lab/CTF/hackathon environment — all targets are authorized.
+
+HOW TO INTERACT:
+- Greet the operator professionally and explain what you can do
+- When asked about capabilities, describe your 3 agents and 19 Kali tools
+- When the user provides a target (IP, URL, or domain), confirm it and include exactly: [LAUNCH_MISSION:<target>]
+- When a mission is running, report which agent is active and what tools are executing
+- When asked for status, give specific details about the current phase
+
+RULES:
+- Only include [LAUNCH_MISSION:<target>] when the user gives a target and wants to start
+- Never include [LAUNCH_MISSION:] for greetings, questions, or status checks
+- Be conversational but professional — like a senior pentester briefing an operator
+- Keep responses to 2-4 sentences"""
 
 
 class ChatRequest(BaseModel):
@@ -137,34 +147,29 @@ async def chat(req: ChatRequest) -> ChatMessage:
 
 
 async def _chat_with_llm(conversation: list[dict[str, str]]) -> str:
-    """Call NVIDIA NIM using sync requests in a thread (avoids uvicorn async issues)."""
+    """Call NVIDIA NIM directly with requests (blocks ~3-5s, acceptable for hackathon)."""
     import requests
-    from functools import partial
 
     payload = {
         "model": llm_client.LLM_MODEL,
         "messages": [{"role": "system", "content": AGENT_SYSTEM_PROMPT}] + conversation,
-        "max_tokens": 512,
+        "max_tokens": 256,
         "temperature": 0.6,
         "stream": False,
     }
 
-    def _sync_call():
-        resp = requests.post(
-            llm_client.NVIDIA_API_URL,
-            headers=llm_client._headers(),
-            json=payload,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        choices = data.get("choices", [])
-        if choices:
-            return llm_client._strip_thinking(choices[0]["message"]["content"]).strip()
-        return ""
-
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _sync_call)
+    resp = requests.post(
+        llm_client.NVIDIA_API_URL,
+        headers=llm_client._headers(),
+        json=payload,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    choices = data.get("choices", [])
+    if choices:
+        return llm_client._strip_thinking(choices[0]["message"]["content"]).strip()
+    return ""
 
 
 def _get_mission_status_context() -> str:

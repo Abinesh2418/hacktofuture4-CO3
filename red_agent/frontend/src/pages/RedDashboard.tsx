@@ -9,7 +9,7 @@ import type { ChatMessage } from "@/types/red.types";
 export function RedDashboard() {
   const {
     connected, toolCalls, logs, chatMessages,
-    missionPhase, sendMissionControl,
+    missionPhase, sendMissionControl, clearToolCalls, clearLogs,
   } = useRedWebSocket();
   const [target, setTarget] = useState("");
 
@@ -93,7 +93,7 @@ export function RedDashboard() {
       <div style={mainLayout}>
         {/* Left: Tool Activity */}
         <div style={leftCol}>
-          <ActivityPanel toolCalls={toolCalls} />
+          <ActivityPanel toolCalls={toolCalls} onClear={clearToolCalls} />
         </div>
 
         {/* Center: Chat */}
@@ -107,7 +107,7 @@ export function RedDashboard() {
 
         {/* Right: Live Terminal */}
         <div style={rightCol}>
-          <LogStream logs={logs} />
+          <LogStream logs={logs} onClear={clearLogs} />
         </div>
       </div>
     </div>

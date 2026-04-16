@@ -2,10 +2,13 @@ import { useState, type CSSProperties } from "react";
 import type { ToolCall } from "@/types/red.types";
 import { ToolCard } from "./ToolCard";
 
-interface ActivityPanelProps { toolCalls: ToolCall[]; }
+interface ActivityPanelProps {
+  toolCalls: ToolCall[];
+  onClear?: () => void;
+}
 type Filter = "all" | "RUNNING" | "DONE" | "FAILED";
 
-export function ActivityPanel({ toolCalls }: ActivityPanelProps) {
+export function ActivityPanel({ toolCalls, onClear }: ActivityPanelProps) {
   const [filter, setFilter] = useState<Filter>("all");
   const filtered = filter === "all" ? toolCalls : toolCalls.filter((t) => t.status === filter);
   const recent = [...filtered].reverse();
@@ -17,9 +20,14 @@ export function ActivityPanel({ toolCalls }: ActivityPanelProps) {
           <span style={{ color: "var(--yellow)", fontSize: 13 }}>&#9881;</span>
           <span style={title}>TOOLS</span>
         </div>
-        <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-ui)" }}>
-          {toolCalls.length}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-ui)" }}>
+            {toolCalls.length}
+          </span>
+          {toolCalls.length > 0 && onClear && (
+            <button onClick={onClear} style={clearBtn}>CLEAR</button>
+          )}
+        </div>
       </div>
 
       <div style={filterRow}>
@@ -71,6 +79,12 @@ const filterBtn: CSSProperties = {
   fontSize: 9, fontWeight: 700, fontFamily: "var(--font-display)",
   padding: "3px 8px", borderRadius: 3, border: "none",
   cursor: "pointer", letterSpacing: 0.5, transition: "all var(--transition)",
+};
+const clearBtn: CSSProperties = {
+  fontSize: 8, fontWeight: 700, fontFamily: "var(--font-display)",
+  padding: "2px 8px", borderRadius: 3, border: "1px solid var(--red)",
+  background: "transparent", color: "var(--red)", cursor: "pointer",
+  letterSpacing: 1,
 };
 const list: CSSProperties = {
   flex: 1, overflowY: "auto", padding: 8,

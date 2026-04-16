@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { LogEntry } from "@/types/red.types";
 
-interface LogStreamProps { logs: LogEntry[]; }
+interface LogStreamProps { logs: LogEntry[]; onClear?: () => void; }
 type LogFilter = "ALL" | "INFO" | "WARN" | "ERROR";
 
 function formatTime(ts: string): string {
@@ -13,7 +13,7 @@ const COLORS: Record<string, string> = {
   INFO: "var(--green)", WARN: "var(--yellow)", ERROR: "var(--red)",
 };
 
-export function LogStream({ logs }: LogStreamProps) {
+export function LogStream({ logs, onClear }: LogStreamProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<LogFilter>("ALL");
   const [auto, setAuto] = useState(true);
@@ -41,6 +41,13 @@ export function LogStream({ logs }: LogStreamProps) {
           }}>
             {auto ? "AUTO" : "SCROLL"}
           </button>
+          {logs.length > 0 && onClear && (
+            <button onClick={onClear} style={{
+              fontSize: 8, fontWeight: 700, fontFamily: "var(--font-display)",
+              padding: "2px 6px", borderRadius: 3, border: "1px solid var(--red)",
+              background: "transparent", color: "var(--red)", cursor: "pointer", letterSpacing: 1,
+            }}>CLEAR</button>
+          )}
         </div>
       </div>
 

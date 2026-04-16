@@ -17,6 +17,8 @@ export interface RedWsState {
   chatMessages: ChatMessage[];
   missionPhase: MissionPhaseUpdate | null;
   sendMissionControl: (action: string, missionId: string) => void;
+  clearToolCalls: () => void;
+  clearLogs: () => void;
 }
 
 const MAX_TOOL_CALLS = 50;
@@ -89,5 +91,8 @@ export function useRedWebSocket(): RedWsState {
     };
   }, []);
 
-  return { connected, toolCalls, logs, chatMessages, missionPhase, sendMissionControl };
+  const clearToolCalls = useCallback(() => setToolCalls([]), []);
+  const clearLogs = useCallback(() => setLogs([]), []);
+
+  return { connected, toolCalls, logs, chatMessages, missionPhase, sendMissionControl, clearToolCalls, clearLogs };
 }
