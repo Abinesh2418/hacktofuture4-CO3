@@ -1,7 +1,9 @@
-"""LLM client for the Red Agent — uses NVIDIA API with Qwen model.
+"""Unified NVIDIA NIM LLM client for all three agents.
 
-Provides async `chat()` for the orchestrator to get intelligent analysis,
-attack planning, and reporting from the LLM.
+Provides:
+- chat()          → text response (orchestrator chat/analyze/report)
+- chat_json()     → parsed JSON response (orchestrator planning)
+- tool_call()     → function-calling loop (ReconAgent + ExploitAgent)
 """
 
 from __future__ import annotations
@@ -9,9 +11,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 _logger = logging.getLogger(__name__)
 
@@ -25,26 +31,24 @@ NVIDIA_API_KEY = os.environ.get(
 )
 LLM_MODEL = os.environ.get("LLM_MODEL", "meta/llama-3.1-70b-instruct")
 
-# System prompt that makes the LLM act as a red team agent
+# Red team system prompt for general chat/analysis
 RED_AGENT_SYSTEM_PROMPT = """You are an autonomous red team AI agent specializing in offensive security.
 Your role is to analyze reconnaissance data, identify vulnerabilities, plan attack strategies, and generate security assessment reports.
+Think step-by-step and provide actionable, structured output. Be concise and technical."""
 
-You think step-by-step and provide actionable, structured output.
-When analyzing recon data, focus on:
-- Open ports and their associated services
-- Known vulnerabilities (CVEs) for discovered services
-- Misconfigurations and weak points
-- Attack surface and entry points
 
-When planning attacks, prioritize:
-- Critical and high severity vulnerabilities first
-- Service-specific exploits
-- Directory traversal and fuzzing opportunities
-- Credential attacks on exposed services
+def _headers() -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {NVIDIA_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
-Always respond with structured, parseable content. Use JSON when asked for structured output.
-Be concise and technical — this is an automated pipeline, not a conversation."""
 
+def _strip_thinking(text: str) -> str:
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+# ── Simple chat (text response) ──
 
 async def chat(
     prompt: str,
@@ -53,17 +57,6 @@ async def chat(
     temperature: float = 0.6,
     max_tokens: int = 4096,
 ) -> str:
-    """Send a prompt to the LLM and return the text response.
-
-    Uses NVIDIA API (OpenAI-compatible chat completions format).
-    Falls back to a simple summary if the API call fails.
-    """
-    headers = {
-        "Authorization": f"Bearer {NVIDIA_API_KEY}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
     payload = {
         "model": LLM_MODEL,
         "messages": [
@@ -76,27 +69,18 @@ async def chat(
         "stream": False,
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(NVIDIA_API_URL, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(NVIDIA_API_URL, headers=_headers(), json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        choices = data.get("choices", [])
+        if choices:
+            content = choices[0].get("message", {}).get("content", "")
+            return _strip_thinking(content).strip()
+        return ""
 
-            # Extract the assistant message content
-            choices = data.get("choices", [])
-            if choices:
-                content = choices[0].get("message", {}).get("content", "")
-                # Strip thinking tags if the model includes them
-                content = _strip_thinking(content)
-                return content.strip()
 
-            _logger.warning("LLM returned no choices: %s", data)
-            return ""
-
-    except Exception as exc:
-        _logger.error("LLM API call failed: %s", exc)
-        raise
-
+# ── JSON chat (parsed response) ──
 
 async def chat_json(
     prompt: str,
@@ -105,17 +89,9 @@ async def chat_json(
     temperature: float = 0.4,
     max_tokens: int = 4096,
 ) -> dict[str, Any]:
-    """Send a prompt and parse the response as JSON.
-
-    Adds an instruction to respond in JSON format. If parsing fails,
-    returns the raw text wrapped in a dict.
-    """
-    json_prompt = prompt + "\n\nRespond ONLY with valid JSON. No markdown, no code fences, no explanation."
+    json_prompt = prompt + "\n\nRespond ONLY with valid JSON. No markdown, no code fences."
     text = await chat(json_prompt, system=system, temperature=temperature, max_tokens=max_tokens)
-
-    # Try to extract JSON from the response
     try:
-        # Handle cases where model wraps JSON in code fences
         cleaned = text
         if "```json" in cleaned:
             cleaned = cleaned.split("```json")[1].split("```")[0]
@@ -126,7 +102,43 @@ async def chat_json(
         return {"raw_response": text}
 
 
-def _strip_thinking(text: str) -> str:
-    """Remove <think>...</think> blocks that Qwen models may include."""
-    import re
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+# ── Function-calling loop (for ReconAgent + ExploitAgent) ──
+
+async def tool_call(
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    model: str | None = None,
+    temperature: float = 0,
+    max_tokens: int = 2048,
+) -> dict:
+    """Single LLM call with function-calling tools.
+
+    Returns the full response choice message (may contain tool_calls).
+    NVIDIA NIM uses the OpenAI-compatible format for function calling.
+    """
+    payload = {
+        "model": model or LLM_MODEL,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto",
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": False,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(NVIDIA_API_URL, headers=_headers(), json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+
+        choices = data.get("choices", [])
+        if not choices:
+            return {"role": "assistant", "content": "No response from LLM."}
+
+        message = choices[0].get("message", {})
+        # Clean thinking tags from content
+        if message.get("content"):
+            message["content"] = _strip_thinking(message["content"])
+
+        return message

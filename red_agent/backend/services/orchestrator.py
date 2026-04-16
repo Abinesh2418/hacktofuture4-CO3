@@ -1,8 +1,10 @@
-"""Autonomous mission orchestrator: recon -> analyze -> plan -> exploit -> report.
+"""Autonomous mission orchestrator: manages ReconAgent → Analyze → ExploitAgent → Report.
 
-Runs as a background asyncio task per mission. Recon tools run in PARALLEL
-via asyncio.gather, results stream to the dashboard as each tool finishes.
-The LLM reasons on available results to decide next steps.
+The orchestrator delegates tool execution to Prathiba's Groq-powered agents
+(ReconAgent and ExploitAgent) which use function-calling to autonomously decide
+which tools to run. The LLM (NVIDIA) handles analysis and reporting.
+
+EventBus events from agents are forwarded to the WebSocket for dashboard streaming.
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ from red_agent.backend.schemas.red_schemas import (
     ToolCall,
     ToolStatus,
 )
-from red_agent.backend.services.mcp_client import call_tool_and_wait
 from red_agent.backend.services import llm_client
 
 _logger = logging.getLogger(__name__)
@@ -31,9 +32,7 @@ _logger = logging.getLogger(__name__)
 
 def _parse_target(target: str) -> tuple[str, str]:
     """Extract bare host and ports from a target that may be a URL."""
-    host = target
-    port = ""
-
+    host, port = target, ""
     if "://" in target:
         parsed = urlparse(target)
         host = parsed.hostname or target
@@ -46,18 +45,11 @@ def _parse_target(target: str) -> tuple[str, str]:
     elif ":" in target:
         parts = target.rsplit(":", 1)
         if parts[1].isdigit():
-            host = parts[0]
-            port = parts[1]
-
+            host, port = parts[0], parts[1]
     if not port:
         port = "1-1000"
-
     return host, port
 
-
-# ---------------------------------------------------------------------------
-# Mission data structure
-# ---------------------------------------------------------------------------
 
 @dataclass
 class Mission:
@@ -65,12 +57,11 @@ class Mission:
     target: str
     phase: MissionPhase = MissionPhase.IDLE
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    recon_results: dict[str, Any] = field(default_factory=dict)
-    intel: dict[str, Any] = field(default_factory=dict)
-    attack_plan: list[dict[str, Any]] = field(default_factory=list)
-    exploit_results: list[dict[str, Any]] = field(default_factory=list)
+    recon_session_id: str = ""
+    recon_result: dict[str, Any] = field(default_factory=dict)
+    exploit_session_id: str = ""
+    exploit_result: dict[str, Any] = field(default_factory=dict)
     llm_analysis: str = ""
-    llm_plan: str = ""
     llm_report: str = ""
     error: str | None = None
     _task: asyncio.Task | None = field(default=None, repr=False)
@@ -78,28 +69,23 @@ class Mission:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id,
-            "target": self.target,
-            "phase": self.phase.value,
-            "created_at": self.created_at,
-            "error": self.error,
+            "id": self.id, "target": self.target, "phase": self.phase.value,
+            "created_at": self.created_at, "error": self.error,
+            "recon_session_id": self.recon_session_id,
+            "exploit_session_id": self.exploit_session_id,
         }
 
-
-# ---------------------------------------------------------------------------
-# Orchestrator
-# ---------------------------------------------------------------------------
 
 class MissionOrchestrator:
 
     def __init__(self) -> None:
         self._missions: dict[str, Mission] = {}
-
-    # ── Public API ──
+        self._event_subscribed = False
 
     async def start_mission(self, target: str) -> Mission:
         mission = Mission(id=str(uuid.uuid4()), target=target)
         self._missions[mission.id] = mission
+        self._ensure_event_subscriptions()
         mission._task = asyncio.create_task(self._run_pipeline(mission))
         await self._emit_log(mission, "INFO", f"Mission created against {target}")
         return mission
@@ -118,7 +104,7 @@ class MissionOrchestrator:
         if not m or m.phase != MissionPhase.PAUSED:
             return False
         m._paused_event.set()
-        await self._emit_log(m, "INFO", "Mission resumed by operator")
+        await self._emit_log(m, "INFO", "Mission resumed")
         return True
 
     async def abort_mission(self, mission_id: str) -> bool:
@@ -138,7 +124,9 @@ class MissionOrchestrator:
     def list_missions(self) -> list[dict]:
         return [m.to_dict() for m in self._missions.values()]
 
-    # ── Pipeline ──
+    # ══════════════════════════════════════════════════════════════════════
+    # Pipeline
+    # ══════════════════════════════════════════════════════════════════════
 
     async def _run_pipeline(self, mission: Mission) -> None:
         try:
@@ -148,10 +136,8 @@ class MissionOrchestrator:
             await self._phase_analyze(mission)
             await self._check_pause(mission)
 
-            await self._phase_plan(mission)
-            await self._check_pause(mission)
-
             await self._phase_exploit(mission)
+            await self._check_pause(mission)
 
             await self._phase_report(mission)
         except asyncio.CancelledError:
@@ -170,86 +156,69 @@ class MissionOrchestrator:
             mission._paused_event.clear()
 
     # ══════════════════════════════════════════════════════════════════════
-    # Phase: RECON — all tools run in PARALLEL
+    # RECON — delegates to Prathiba's ReconAgent (Groq function-calling)
     # ══════════════════════════════════════════════════════════════════════
 
     async def _phase_recon(self, mission: Mission) -> None:
         await self._emit_phase(mission, MissionPhase.RECON)
 
-        host, ports = _parse_target(mission.target)
-
-        # Define all recon tools
-        tool_specs = [
-            ("nmap_scan", "run_nmap", {"target": host, "ports": ports, "wait": True}),
-            ("httpx_probe", "run_httpx", {"target": mission.target, "wait": True}),
-            ("nuclei_scan", "run_nuclei", {"target": mission.target, "wait": True}),
-            ("dirsearch", "run_dirsearch", {"target": mission.target, "wait": True}),
-            ("katana_crawl", "run_katana", {"target": mission.target, "wait": True}),
-            ("gobuster_scan", "run_gobuster", {"target": mission.target, "wait": True}),
-        ]
-
-        # Create tool call objects and emit them all as RUNNING
-        tool_calls: dict[str, ToolCall] = {}
-        for display_name, _, _ in tool_specs:
-            tc = self._make_tool_call(display_name, "scan", {"target": mission.target})
-            tool_calls[display_name] = tc
-            await self._emit_tool_call_ws(tc)
-
-        await self._emit_log(
-            mission, "INFO",
-            f"Launching {len(tool_specs)} recon tools in parallel...",
+        from red_agent.scanner.recon_agent import (
+            run_recon_session, get_session_result,
         )
+
+        recon_tc = self._make_tool_call("recon_agent", "scan", {"target": mission.target})
+        await self._emit_tool_call_ws(recon_tc)
+
         await self._emit_chat(
             mission,
-            f"Launching parallel reconnaissance on {mission.target}:\n"
-            + "\n".join(f"  - {name}" for name, _, _ in tool_specs),
+            f"Starting ReconAgent on {mission.target}.\n"
+            f"The Groq LLM will autonomously decide which tools to run "
+            f"(nmap, nuclei, gobuster, katana, etc.) based on what it discovers.",
         )
 
-        TOOL_TIMEOUT = 120  # seconds per tool — don't wait forever
+        # Launch the recon agent (runs in background)
+        session_id = await run_recon_session(mission.target, context="general security assessment")
+        mission.recon_session_id = session_id
 
-        # Run a single tool with timeout
-        async def _run_tool(display_name: str, mcp_tool: str, args: dict) -> None:
-            tc = tool_calls[display_name]
-            try:
-                result = await asyncio.wait_for(
-                    call_tool_and_wait(mcp_tool, args),
-                    timeout=TOOL_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                result = {"tool": display_name, "ok": False, "error": f"Timed out after {TOOL_TIMEOUT}s"}
-                await self._emit_log(mission, "WARN", f"{display_name} timed out after {TOOL_TIMEOUT}s")
-            except Exception as exc:
-                result = {"tool": display_name, "ok": False, "error": str(exc)}
+        await self._emit_log(mission, "INFO", f"ReconAgent session {session_id} started")
 
-            ok = result.get("ok", True) and not result.get("error")
-            self._finish_tool_call(tc, result, ToolStatus.DONE if ok else ToolStatus.FAILED)
-            await self._emit_tool_call_ws(tc)
-            mission.recon_results[display_name] = result
+        # Poll until complete (events stream to dashboard via EventBus → WebSocket)
+        POLL_INTERVAL = 3
+        MAX_WAIT = 300  # 5 minutes max
+        elapsed = 0
+        while elapsed < MAX_WAIT:
+            result = get_session_result(session_id)
+            if result is not None and result.status in ("complete", "failed"):
+                break
+            await asyncio.sleep(POLL_INTERVAL)
+            elapsed += POLL_INTERVAL
 
-            status = "completed" if ok else "failed"
-            findings_count = len(result.get("findings", []))
-            await self._emit_log(
-                mission, "INFO" if ok else "WARN",
-                f"{display_name} {status} ({findings_count} findings)",
-            )
+        result = get_session_result(session_id)
+        if result is None:
+            mission.recon_result = {"status": "timeout", "error": "ReconAgent timed out"}
+            self._finish_tool_call(recon_tc, mission.recon_result, ToolStatus.FAILED)
+        elif result.status == "failed":
+            mission.recon_result = result.to_dict()
+            self._finish_tool_call(recon_tc, {"status": "failed", "error": result.error}, ToolStatus.FAILED)
+        else:
+            mission.recon_result = result.to_dict()
+            self._finish_tool_call(recon_tc, {
+                "status": "complete",
+                "tools_run": result.tools_run,
+                "open_ports": result.open_ports,
+                "attack_vectors": len(result.attack_vectors),
+                "risk_score": result.risk_score,
+            })
 
-        # Launch ALL tools in parallel — each has its own timeout
-        await asyncio.gather(
-            *(_run_tool(name, mcp_tool, args) for name, mcp_tool, args in tool_specs),
-            return_exceptions=True,
-        )
-
-        completed = sum(1 for r in mission.recon_results.values() if r.get("ok", True))
-        total_findings = sum(
-            len(r.get("findings", [])) for r in mission.recon_results.values()
-        )
+        await self._emit_tool_call_ws(recon_tc)
         await self._emit_log(
             mission, "INFO",
-            f"Recon complete: {completed}/{len(tool_specs)} tools succeeded, {total_findings} total findings",
+            f"ReconAgent finished: {len(mission.recon_result.get('attack_vectors', []))} vectors, "
+            f"risk={mission.recon_result.get('risk_score', 0)}",
         )
 
     # ══════════════════════════════════════════════════════════════════════
-    # Phase: ANALYZE — LLM reasons on all recon results
+    # ANALYZE — NVIDIA LLM reasons on ReconAgent results
     # ══════════════════════════════════════════════════════════════════════
 
     async def _phase_analyze(self, mission: Mission) -> None:
@@ -258,336 +227,216 @@ class MissionOrchestrator:
         analyze_tc = self._make_tool_call("llm_analyze", "strategy", {"target": mission.target})
         await self._emit_tool_call_ws(analyze_tc)
 
-        # Structural extraction
-        intel = self._extract_intel(mission.recon_results)
-        mission.intel = intel
+        recon_summary = json.dumps(mission.recon_result, indent=2, default=str)[:6000]
+        prompt = f"""Analyze these reconnaissance results from the autonomous ReconAgent for target {mission.target}.
 
-        # Build a per-tool summary for the LLM
-        tool_summaries = []
-        for name, result in mission.recon_results.items():
-            ok = result.get("ok", True) and not result.get("error")
-            findings = result.get("findings", [])
-            raw = result.get("raw_tail", "")[:500]
-            tool_summaries.append(
-                f"### {name} ({'OK' if ok else 'FAILED'})\n"
-                f"Findings ({len(findings)}): {json.dumps(findings[:10], default=str)}\n"
-                f"Raw output: {raw}"
-            )
+RECON RESULTS:
+{recon_summary}
 
-        recon_text = "\n\n".join(tool_summaries)[:8000]
+Provide a concise security analysis:
+1. Attack surface (what's exposed)
+2. Most critical findings
+3. Recommended exploitation path
+4. Risk level: Critical/High/Medium/Low
 
-        prompt = f"""You are analyzing parallel reconnaissance results for target {mission.target}.
-{len(mission.recon_results)} tools ran simultaneously. Analyze ALL results together.
-
-{recon_text}
-
-STRUCTURAL SUMMARY:
-- Open ports: {len(intel.get('open_ports', []))}
-- Services: {len(intel.get('services', []))}
-- Vulnerabilities: {len(intel.get('vulnerabilities', []))}
-- Directories: {len(intel.get('directories', []))}
-- URLs: {len(intel.get('urls', []))}
-- Technologies: {len(intel.get('technologies', []))}
-
-Provide:
-1. Attack surface assessment
-2. Most critical findings (reference specific tool results)
-3. Services and versions exposed
-4. Potential entry points ranked by risk
-5. Overall risk: Critical/High/Medium/Low
-
-Also state if additional recon tools should be run and which ones."""
+Reference specific findings from the data."""
 
         try:
             analysis = await llm_client.chat(prompt)
             mission.llm_analysis = analysis
-            await self._emit_log(mission, "INFO", "LLM analysis complete")
         except Exception as exc:
-            analysis = f"LLM analysis unavailable: {exc}. Proceeding with structural data."
+            analysis = f"LLM analysis unavailable: {exc}"
             mission.llm_analysis = analysis
-            await self._emit_log(mission, "WARN", f"LLM call failed: {exc}")
 
         self._finish_tool_call(analyze_tc, {
-            "open_ports": len(intel.get("open_ports", [])),
-            "services": len(intel.get("services", [])),
-            "vulnerabilities": len(intel.get("vulnerabilities", [])),
-            "directories": len(intel.get("directories", [])),
             "llm_powered": True,
+            "attack_vectors": len(mission.recon_result.get("attack_vectors", [])),
+            "risk_score": mission.recon_result.get("risk_score", 0),
         })
         await self._emit_tool_call_ws(analyze_tc)
-
-        await self._emit_chat(mission, f"**ANALYSIS COMPLETE** for {mission.target}\n\n{analysis}")
-
-    def _extract_intel(self, recon_results: dict[str, Any]) -> dict[str, Any]:
-        intel: dict[str, Any] = {
-            "open_ports": [], "services": [], "technologies": [],
-            "vulnerabilities": [], "directories": [], "urls": [], "parameters": [],
-        }
-
-        for name, result in recon_results.items():
-            findings = result.get("findings", [])
-            raw = result.get("raw_tail", "")
-
-            if name == "nmap_scan":
-                for f in findings:
-                    if isinstance(f, dict):
-                        if f.get("port"): intel["open_ports"].append(f)
-                        if f.get("service"): intel["services"].append(f)
-                    elif isinstance(f, str):
-                        intel["open_ports"].append({"raw": f})
-                # Also try to parse raw nmap XML for ports
-                if not intel["open_ports"] and raw:
-                    import re
-                    for m in re.finditer(r'portid="(\d+)".*?state="(\w+)".*?name="(\w+)"', raw):
-                        intel["open_ports"].append({"port": int(m.group(1)), "state": m.group(2), "service": m.group(3)})
-                        intel["services"].append({"port": int(m.group(1)), "service": m.group(3)})
-
-            elif name == "nuclei_scan":
-                for f in findings:
-                    if isinstance(f, dict): intel["vulnerabilities"].append(f)
-                    elif isinstance(f, str): intel["vulnerabilities"].append({"raw": f})
-
-            elif name in ("dirsearch", "gobuster_scan"):
-                for f in findings:
-                    if isinstance(f, dict): intel["directories"].append(f)
-                    elif isinstance(f, str): intel["directories"].append({"path": f})
-
-            elif name == "httpx_probe":
-                for f in findings:
-                    if isinstance(f, dict):
-                        if f.get("tech"): intel["technologies"].append(f)
-                        if f.get("url"): intel["urls"].append(f)
-                    elif isinstance(f, str): intel["urls"].append({"url": f})
-
-            elif name == "katana_crawl":
-                for f in findings:
-                    if isinstance(f, dict): intel["urls"].append(f)
-                    elif isinstance(f, str): intel["urls"].append({"url": f})
-
-        return intel
+        await self._emit_chat(mission, f"**ANALYSIS**\n\n{analysis}")
 
     # ══════════════════════════════════════════════════════════════════════
-    # Phase: PLAN — LLM generates attack plan
-    # ══════════════════════════════════════════════════════════════════════
-
-    async def _phase_plan(self, mission: Mission) -> None:
-        await self._emit_phase(mission, MissionPhase.PLAN)
-
-        plan_tc = self._make_tool_call("llm_plan_attack", "strategy", {"target": mission.target})
-        await self._emit_tool_call_ws(plan_tc)
-
-        intel_summary = json.dumps(mission.intel, indent=2, default=str)[:6000]
-        prompt = f"""Based on the reconnaissance of target {mission.target}, create an attack plan.
-
-INTELLIGENCE:
-{intel_summary}
-
-ANALYSIS:
-{mission.llm_analysis[:3000]}
-
-Create a JSON array of attack steps. Each step:
-- "type": one of "nuclei_verify", "cve_lookup", "dir_fuzz", "port_exploit", "service_exploit"
-- "target": specific target URL/IP
-- "description": what and why
-- "severity": "critical", "high", "medium", or "low"
-
-Prioritize critical/high severity. Include 3-10 steps.
-Respond with ONLY a JSON array."""
-
-        try:
-            plan_data = await llm_client.chat_json(prompt)
-            if isinstance(plan_data, list):
-                mission.attack_plan = plan_data
-            elif isinstance(plan_data, dict) and "raw_response" in plan_data:
-                mission.attack_plan = self._build_structural_plan(mission)
-                mission.llm_plan = plan_data["raw_response"]
-            else:
-                mission.attack_plan = plan_data.get("steps", plan_data.get("plan", [plan_data]))
-            await self._emit_log(mission, "INFO", f"LLM generated {len(mission.attack_plan)} attack steps")
-        except Exception as exc:
-            await self._emit_log(mission, "WARN", f"LLM plan failed: {exc}, using structural plan")
-            mission.attack_plan = self._build_structural_plan(mission)
-
-        self._finish_tool_call(plan_tc, {
-            "steps": len(mission.attack_plan),
-            "vectors": [s.get("type", "unknown") for s in mission.attack_plan],
-            "llm_powered": True,
-        })
-        await self._emit_tool_call_ws(plan_tc)
-
-        plan_lines = []
-        for i, step in enumerate(mission.attack_plan):
-            sev = step.get("severity", "?")
-            desc = step.get("description", step.get("type", "unknown"))
-            plan_lines.append(f"  {i+1}. [{sev.upper()}] {desc}")
-
-        plan_text = "\n".join(plan_lines) if plan_lines else "  (No specific steps)"
-        await self._emit_chat(
-            mission,
-            f"**ATTACK PLAN** — {len(mission.attack_plan)} vectors:\n\n{plan_text}\n\nExecuting...",
-        )
-
-    def _build_structural_plan(self, mission: Mission) -> list[dict[str, Any]]:
-        plan: list[dict[str, Any]] = []
-        for vuln in mission.intel.get("vulnerabilities", []):
-            plan.append({
-                "type": "nuclei_verify", "target": mission.target,
-                "severity": vuln.get("severity", "high"),
-                "description": f"Verify: {vuln.get('raw', vuln.get('name', 'unknown'))}",
-            })
-        for svc in mission.intel.get("services", []):
-            plan.append({
-                "type": "cve_lookup",
-                "service": svc.get("service", svc.get("raw", "unknown")),
-                "version": svc.get("version"), "severity": "medium",
-                "description": f"CVE lookup: {svc.get('service', svc.get('raw', 'unknown'))}",
-            })
-        for d in mission.intel.get("directories", [])[:5]:
-            path = d.get("path", d.get("raw", "/"))
-            plan.append({
-                "type": "dir_fuzz", "target": f"{mission.target}{path}",
-                "severity": "medium", "description": f"Fuzz: {path}",
-            })
-        for p in mission.intel.get("open_ports", [])[:10]:
-            port = p.get("port", p.get("raw", ""))
-            plan.append({
-                "type": "port_exploit", "target": mission.target,
-                "port": port, "severity": "medium",
-                "description": f"Deep scan port {port}",
-            })
-        return plan
-
-    # ══════════════════════════════════════════════════════════════════════
-    # Phase: EXPLOIT — execute plan, LLM reasons after each result
+    # EXPLOIT — delegates to Prathiba's ExploitAgent (Groq function-calling)
     # ══════════════════════════════════════════════════════════════════════
 
     async def _phase_exploit(self, mission: Mission) -> None:
         await self._emit_phase(mission, MissionPhase.EXPLOIT)
 
-        for i, step in enumerate(mission.attack_plan):
-            step_type = step.get("type", "unknown")
-            step_target = step.get("target", mission.target)
-            exploit_host, exploit_ports = _parse_target(step_target)
+        from red_agent.exploiter.exploit_agent import (
+            run_exploit_session, get_exploit_result,
+        )
 
-            step_tc = self._make_tool_call(
-                f"exploit_{step_type}", "exploit",
-                {"step": i + 1, "type": step_type, "target": step_target},
-            )
-            await self._emit_tool_call_ws(step_tc)
-            await self._emit_log(
-                mission, "INFO",
-                f"Exploit {i+1}/{len(mission.attack_plan)}: {step.get('description', step_type)}",
-            )
+        attack_vectors = mission.recon_result.get("attack_vectors", [])
+        if not attack_vectors:
+            await self._emit_chat(mission, "No exploitable vectors found. Skipping exploit phase.")
+            await self._emit_log(mission, "INFO", "No attack vectors — skipping exploit")
+            return
 
-            result: dict[str, Any]
-            try:
-                if step_type == "nuclei_verify":
-                    result = await call_tool_and_wait("run_nuclei", {
-                        "target": step_target, "severity": step.get("severity", "critical,high"),
-                        "wait": True,
-                    })
-                elif step_type == "dir_fuzz":
-                    result = await call_tool_and_wait("run_ffuf", {
-                        "target": step_target, "mode": "content", "wait": True,
-                    })
-                elif step_type == "cve_lookup":
-                    result = {"type": "cve_lookup", "service": step.get("service"),
-                              "version": step.get("version"), "ok": True, "note": "CVE queried"}
-                elif step_type in ("port_exploit", "service_exploit"):
-                    result = await call_tool_and_wait("run_nmap", {
-                        "target": exploit_host, "ports": str(step.get("port", exploit_ports)),
-                        "scan_type": "-sV -sC", "wait": True,
-                    })
-                else:
-                    result = await call_tool_and_wait("run_nmap", {
-                        "target": exploit_host, "ports": exploit_ports,
-                        "scan_type": "-sV", "wait": True,
-                    })
-            except Exception as exc:
-                result = {"ok": False, "error": str(exc)}
+        # Determine vulnerability type from attack vectors
+        vuln_type = "sqli"  # default
+        for vec in attack_vectors:
+            vtype = vec.get("type", "").lower()
+            if "sql" in vtype:
+                vuln_type = "sqli"; break
+            elif "rce" in vtype or "command" in vtype:
+                vuln_type = "rce"; break
+            elif "lfi" in vtype or "file" in vtype:
+                vuln_type = "lfi"; break
+            elif "xss" in vtype:
+                vuln_type = "xss"; break
 
-            ok = result.get("ok", True) and not result.get("error")
-            self._finish_tool_call(step_tc, result, ToolStatus.DONE if ok else ToolStatus.FAILED)
-            await self._emit_tool_call_ws(step_tc)
-            step["result"] = result
-            mission.exploit_results.append({"step": step, "result": result})
+        exploit_tc = self._make_tool_call("exploit_agent", "exploit", {
+            "target": mission.target, "vuln_type": vuln_type,
+            "vectors": len(attack_vectors),
+        })
+        await self._emit_tool_call_ws(exploit_tc)
 
-        # LLM reasons on exploit results
-        try:
-            exploit_summary = json.dumps(mission.exploit_results, indent=2, default=str)[:4000]
-            reasoning = await llm_client.chat(
-                f"You just executed {len(mission.exploit_results)} exploit steps against {mission.target}. "
-                f"Results:\n{exploit_summary}\n\n"
-                f"Briefly assess: which exploits succeeded? Any new attack surfaces discovered? "
-                f"What's the current compromise level? (2-3 sentences)"
-            )
-            await self._emit_chat(mission, f"**EXPLOIT ASSESSMENT**\n\n{reasoning}")
-        except Exception:
-            pass
+        await self._emit_chat(
+            mission,
+            f"Starting ExploitAgent — targeting {vuln_type} vulnerabilities.\n"
+            f"The Groq LLM will decide exploitation strategy based on {len(attack_vectors)} vectors.",
+        )
 
-        succeeded = sum(1 for r in mission.exploit_results if r["result"].get("ok", True))
+        # Launch exploit agent
+        exploit_id = await run_exploit_session(
+            target_url=mission.target,
+            recon_session_id=mission.recon_session_id,
+            vulnerability_type=vuln_type,
+            recon_context=attack_vectors,
+        )
+        mission.exploit_session_id = exploit_id
+        await self._emit_log(mission, "INFO", f"ExploitAgent session {exploit_id} started")
+
+        # Poll until complete
+        POLL_INTERVAL = 3
+        MAX_WAIT = 300
+        elapsed = 0
+        while elapsed < MAX_WAIT:
+            result = get_exploit_result(exploit_id)
+            if result is not None and result.status in ("complete", "partial", "failed"):
+                break
+            await asyncio.sleep(POLL_INTERVAL)
+            elapsed += POLL_INTERVAL
+
+        result = get_exploit_result(exploit_id)
+        if result is None:
+            mission.exploit_result = {"status": "timeout"}
+            self._finish_tool_call(exploit_tc, {"status": "timeout"}, ToolStatus.FAILED)
+        elif result.status == "failed":
+            mission.exploit_result = {"status": "failed", "error": result.error}
+            self._finish_tool_call(exploit_tc, {"status": "failed"}, ToolStatus.FAILED)
+        else:
+            rd = result.__dict__.copy()
+            rd.pop("_start_monotonic", None)
+            mission.exploit_result = rd
+            self._finish_tool_call(exploit_tc, {
+                "status": result.status,
+                "databases": result.databases_found,
+                "credentials": len(result.credentials_found),
+                "tools_run": result.tools_run,
+            })
+
+        await self._emit_tool_call_ws(exploit_tc)
         await self._emit_log(
             mission, "INFO",
-            f"Exploit complete: {succeeded}/{len(mission.exploit_results)} succeeded",
+            f"ExploitAgent finished: {mission.exploit_result.get('status', 'unknown')}",
         )
 
     # ══════════════════════════════════════════════════════════════════════
-    # Phase: REPORT — LLM generates pentest report
+    # REPORT — NVIDIA LLM generates pentest report
     # ══════════════════════════════════════════════════════════════════════
 
     async def _phase_report(self, mission: Mission) -> None:
         await self._emit_phase(mission, MissionPhase.REPORT)
 
-        report_tc = self._make_tool_call("llm_generate_report", "strategy", {"mission_id": mission.id})
+        report_tc = self._make_tool_call("llm_report", "strategy", {"mission_id": mission.id})
         await self._emit_tool_call_ws(report_tc)
 
-        vuln_count = len(mission.intel.get("vulnerabilities", []))
-        port_count = len(mission.intel.get("open_ports", []))
-        svc_count = len(mission.intel.get("services", []))
-        exploit_count = len(mission.exploit_results)
-        succeeded = sum(1 for r in mission.exploit_results if r["result"].get("ok", True))
+        recon_summary = json.dumps(mission.recon_result, indent=2, default=str)[:4000]
+        exploit_summary = json.dumps(mission.exploit_result, indent=2, default=str)[:4000]
 
-        exploit_summary = json.dumps(mission.exploit_results, indent=2, default=str)[:6000]
         prompt = f"""Generate a penetration test report for {mission.target}.
 
-SUMMARY: {len(mission.recon_results)} recon tools (parallel), {port_count} ports, {svc_count} services, {vuln_count} vulns, {exploit_count} exploits ({succeeded} succeeded)
+RECON RESULTS:
+{recon_summary}
 
 ANALYSIS:
 {mission.llm_analysis[:2000]}
 
-EXPLOITS:
+EXPLOIT RESULTS:
 {exploit_summary}
 
-Report format:
+Format:
 1. Executive Summary (2-3 sentences)
 2. Critical Findings (bullets)
-3. Risk Assessment (level + justification)
-4. Recommendations (top 3-5 fixes)"""
+3. Exploitation Results (what was compromised)
+4. Risk Assessment
+5. Recommendations (top 3-5 fixes)"""
 
         try:
-            report_text = await llm_client.chat(prompt)
-            mission.llm_report = report_text
+            report = await llm_client.chat(prompt)
+            mission.llm_report = report
         except Exception as exc:
-            report_text = (
-                f"Mission {mission.id[:8]} complete. "
-                f"Recon: {port_count} ports, {svc_count} services, {vuln_count} vulns. "
-                f"Exploits: {succeeded}/{exploit_count} succeeded. (LLM report failed: {exc})"
-            )
-            mission.llm_report = report_text
+            report = f"Mission {mission.id[:8]} complete. LLM report failed: {exc}"
+            mission.llm_report = report
 
-        self._finish_tool_call(report_tc, {
-            "target": mission.target, "open_ports": port_count,
-            "services_found": svc_count, "vulnerabilities_found": vuln_count,
-            "exploit_steps": exploit_count, "successful_exploits": succeeded,
-        })
+        self._finish_tool_call(report_tc, {"llm_powered": True})
         await self._emit_tool_call_ws(report_tc)
+        await self._emit_chat(mission, f"**PENETRATION TEST REPORT**\n\n{report}")
 
-        await self._emit_chat(
-            mission,
-            f"**PENETRATION TEST REPORT** — Mission {mission.id[:8]}\n\n{report_text}",
-        )
         mission.phase = MissionPhase.DONE
         await self._emit_phase(mission, MissionPhase.DONE)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # EventBus → WebSocket bridge (streams agent events to dashboard)
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _ensure_event_subscriptions(self) -> None:
+        if self._event_subscribed:
+            return
+        self._event_subscribed = True
+
+        # Recon events
+        event_bus.subscribe("recon.tool_done", self._on_tool_done)
+        event_bus.subscribe("recon.started", self._on_recon_started)
+
+        # Exploit events
+        event_bus.subscribe("exploit.tool_done", self._on_tool_done)
+        event_bus.subscribe("exploit.started", self._on_exploit_started)
+
+    async def _on_tool_done(self, data: dict) -> None:
+        """Forward agent tool_done events to the WebSocket as tool_call cards."""
+        tool_name = data.get("tool", "unknown")
+        ok = data.get("ok", True)
+        tc = self._make_tool_call(tool_name, "scan", {
+            "session_id": data.get("session_id") or data.get("exploit_id", ""),
+        })
+        self._finish_tool_call(tc, {
+            "findings": data.get("finding_count", data.get("details", 0)),
+            "ok": ok,
+        }, ToolStatus.DONE if ok else ToolStatus.FAILED)
+        await self._emit_tool_call_ws(tc)
+
+    async def _on_recon_started(self, data: dict) -> None:
+        from red_agent.backend.websocket.red_ws import manager
+        await manager.broadcast({
+            "type": "log",
+            "payload": LogEntry(
+                level="INFO",
+                message=f"[ReconAgent] Started on {data.get('target', '?')}",
+            ).model_dump(mode="json"),
+        })
+
+    async def _on_exploit_started(self, data: dict) -> None:
+        from red_agent.backend.websocket.red_ws import manager
+        await manager.broadcast({
+            "type": "log",
+            "payload": LogEntry(
+                level="INFO",
+                message=f"[ExploitAgent] Started on {data.get('target', '?')}",
+            ).model_dump(mode="json"),
+        })
 
     # ══════════════════════════════════════════════════════════════════════
     # Helpers
@@ -637,5 +486,4 @@ Report format:
         await self._emit_log(mission, "INFO", f"Phase -> {phase.value}")
 
 
-# Module-level singleton
 orchestrator = MissionOrchestrator()

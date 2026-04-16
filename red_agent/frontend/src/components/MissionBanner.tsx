@@ -8,7 +8,7 @@ interface Props {
   onAbort?: () => void;
 }
 
-const PHASES: MissionPhaseValue[] = ["RECON", "ANALYZE", "PLAN", "EXPLOIT", "REPORT"];
+const PHASES: MissionPhaseValue[] = ["RECON", "ANALYZE", "EXPLOIT", "REPORT"];
 const CFG: Record<string, { c: string; i: string }> = {
   IDLE: { c: "var(--text-dim)", i: "\u25CB" }, RECON: { c: "var(--cyan)", i: "\u2316" },
   ANALYZE: { c: "var(--yellow)", i: "\u2699" }, PLAN: { c: "var(--orange)", i: "\u2694" },

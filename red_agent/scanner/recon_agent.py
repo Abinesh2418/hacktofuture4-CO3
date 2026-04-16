@@ -103,20 +103,12 @@ _WORDLIST_PATH = _find_wordlist()
 
 
 def _get_available_tools() -> list[str]:
-    """Return names of Arsenal tools that are actually installed."""
-    import shutil
-    available = []
-    try:
-        from red_agent.red_arsenal.config import TOOLS
-        for name in ("nmap", "nuclei", "katana", "gobuster", "gau", "ffuf"):
-            if TOOLS.get(name) and TOOLS[name].installed:
-                available.append(name)
-    except Exception:
-        pass
-    # sqlmap is not in red_arsenal config but is standard on Kali
-    if shutil.which("sqlmap"):
-        available.append("sqlmap")
-    return available
+    """Return names of tools available via MCP (remote Kali VM).
+
+    Since tools run on the remote Kali VM via MCP, we don't check local
+    installation. All MCP-registered tools are available.
+    """
+    return ["nmap", "nuclei", "katana", "gobuster", "gau", "ffuf", "sqlmap"]
 
 
 # Groq function-calling tool schemas
@@ -271,27 +263,30 @@ def _build_tool_schemas(available: list[str]) -> list[dict]:
     return schemas
 
 
-# ---------- Tool execution --------------------------------------------------
+# ---------- Tool execution (via MCP to remote Kali VM) ----------------------
 
 async def _run_arsenal_tool(name: str, args: dict, timeout: float) -> dict:
-    """Execute a single Arsenal tool and return its parsed result."""
+    """Execute a tool via the MCP client (red_arsenal server on Kali VM).
+
+    Maps Groq function-calling tool names to MCP tool names on the server.
+    """
+    from red_agent.backend.services.mcp_client import call_tool_and_wait
+
     try:
-        from red_agent.red_arsenal.config import TOOLS
-        from red_agent.red_arsenal.tools import api as api_tools
-        from red_agent.red_arsenal.tools import recon as recon_tools
-        from red_agent.red_arsenal.runner import run as run_cmd
-        from red_agent.red_arsenal import parsers
-
         target = args.get("target", "")
-        wordlist = _WORDLIST_PATH if os.path.isfile(_WORDLIST_PATH) else None
 
+        # Map agent tool names → MCP server tool names + args
         if name == "nmap_scan":
             host = _host_only(target)
             ports = args.get("ports", "22,80,443,3306,5432,8000,8080,8443,8888,9090")
             result = await asyncio.wait_for(
-                recon_tools.nmap_impl(host, scan_type="-sV -sC -Pn", ports=ports),
+                call_tool_and_wait("run_nmap", {
+                    "target": host, "ports": ports,
+                    "scan_type": "-sV -sC -Pn", "wait": True,
+                }),
                 timeout=timeout,
             )
+            # Filter to open ports only
             findings = result.get("findings") or []
             result["findings"] = [f for f in findings if isinstance(f, dict) and f.get("state") == "open"]
             return result
@@ -299,51 +294,45 @@ async def _run_arsenal_tool(name: str, args: dict, timeout: float) -> dict:
         elif name == "nuclei_scan":
             severity = args.get("severity", "critical,high")
             return await asyncio.wait_for(
-                recon_tools.nuclei_impl(target, severity=severity),
+                call_tool_and_wait("run_nuclei", {
+                    "target": target, "severity": severity, "wait": True,
+                }),
                 timeout=timeout,
             )
 
         elif name == "gobuster_scan":
-            if wordlist:
-                binary = TOOLS["gobuster"].resolve()
-                cmd = [binary, "dir", "-u", target, "-w", wordlist, "-x", "php,html,js,txt,py,asp,aspx,jsp", "-q", "--no-error"]
-                raw = await asyncio.wait_for(run_cmd(cmd, timeout=TOOLS["gobuster"].default_timeout), timeout=timeout)
-                return parsers.parse_gobuster(raw, target)
-            return await asyncio.wait_for(recon_tools.gobuster_impl(target), timeout=timeout)
+            return await asyncio.wait_for(
+                call_tool_and_wait("run_gobuster", {"target": target, "wait": True}),
+                timeout=timeout,
+            )
 
         elif name == "ffuf_scan":
-            if wordlist:
-                import tempfile
-                binary = TOOLS["ffuf"].resolve()
-                tmpf = tempfile.NamedTemporaryFile(prefix="ffuf-", suffix=".json", delete=False)
-                tmpf.close()
-                fuzz_url = target.rstrip("/") + "/FUZZ"
-                cmd = [binary, "-u", fuzz_url, "-w", wordlist, "-of", "json", "-o", tmpf.name,
-                       "-mc", "200,204,301,302,307,401,403", "-s"]
-                raw = await asyncio.wait_for(run_cmd(cmd, timeout=TOOLS["ffuf"].default_timeout), timeout=timeout)
-                try:
-                    with open(tmpf.name) as f:
-                        data = json.load(f)
-                    parsed = parsers._base("ffuf", target, raw)
-                    for row in data.get("results") or []:
-                        parsed["findings"].append({"url": row.get("url"), "status": row.get("status"), "length": row.get("length")})
-                    return parsed
-                except Exception:
-                    return parsers.parse_ffuf(raw, target)
-                finally:
-                    os.unlink(tmpf.name)
-            return await asyncio.wait_for(api_tools.ffuf_impl(target), timeout=timeout)
+            return await asyncio.wait_for(
+                call_tool_and_wait("run_ffuf", {"target": target, "mode": "content", "wait": True}),
+                timeout=timeout,
+            )
 
         elif name == "katana_crawl":
-            return await asyncio.wait_for(recon_tools.katana_impl(target), timeout=timeout)
+            return await asyncio.wait_for(
+                call_tool_and_wait("run_katana", {"target": target, "wait": True}),
+                timeout=timeout,
+            )
 
         elif name == "gau_scan":
             host = _host_only(target)
-            return await asyncio.wait_for(recon_tools.gau_impl(host), timeout=timeout)
+            return await asyncio.wait_for(
+                call_tool_and_wait("run_gau", {"target": host, "wait": True}),
+                timeout=timeout,
+            )
 
         elif name == "sqlmap_scan":
+            # sqlmap is not in MCP server — run nmap deep scan as fallback
+            host = _host_only(target)
             return await asyncio.wait_for(
-                _run_sqlmap(target, args.get("forms", True), run_cmd),
+                call_tool_and_wait("run_nmap", {
+                    "target": host, "scan_type": "-sV -sC --script=http-sql-injection",
+                    "ports": "80,443,5000,8080,8443", "wait": True,
+                }),
                 timeout=timeout,
             )
 
@@ -532,8 +521,8 @@ class ReconAgent:
         return cves
 
     async def _agent_loop(self, cves: list[dict]) -> tuple[str, list[dict]]:
-        """Core agent loop: LLM decides tools via function calling."""
-        from groq import AsyncGroq
+        """Core agent loop: NVIDIA NIM LLM decides tools via function calling."""
+        from red_agent.backend.services import llm_client
 
         available_tools = _get_available_tools()
         tool_schemas = _build_tool_schemas(available_tools)
@@ -557,11 +546,6 @@ class ReconAgent:
             )},
         ]
 
-        model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-        if model.startswith("groq/"):
-            model = model.split("/", 1)[1]
-
-        client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"), timeout=60.0)
         tool_outputs: list[dict] = []
         tools_called: set[str] = set()
         final_assessment = "{}"
@@ -572,32 +556,25 @@ class ReconAgent:
                 self.session_id, iteration + 1, MAX_AGENT_ITERATIONS,
             )
 
-            resp = await client.chat.completions.create(
-                model=model,
-                temperature=0,
-                max_tokens=2048,
-                messages=messages,
-                tools=tool_schemas,
-                tool_choice="auto",
-            )
-
-            choice = resp.choices[0]
-            message = choice.message
+            message = await llm_client.tool_call(messages, tool_schemas)
 
             # Add assistant message to history
-            messages.append(message.model_dump(exclude_none=True))
+            messages.append(message)
 
-            # No tool calls → LLM is done, extract final text
-            if not message.tool_calls:
+            # No tool calls → LLM is done
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
                 logger.info("[ReconAgent:%s] agent finished (no more tool calls)", self.session_id)
-                final_assessment = message.content or "{}"
+                final_assessment = message.get("content") or "{}"
                 break
 
             # Process each tool call
-            for tool_call in message.tool_calls:
-                fn_name = tool_call.function.name
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                fn_name = fn.get("name", "")
+                tc_id = tc.get("id", f"call_{iteration}")
                 try:
-                    fn_args = json.loads(tool_call.function.arguments)
+                    fn_args = json.loads(fn.get("arguments", "{}"))
                 except json.JSONDecodeError:
                     fn_args = {}
 
@@ -612,7 +589,7 @@ class ReconAgent:
                     final_assessment = json.dumps(fn_args)
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": tc_id,
                         "content": "Assessment received.",
                     })
                     return final_assessment, tool_outputs
@@ -621,14 +598,14 @@ class ReconAgent:
                 if fn_name in tools_called:
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": tc_id,
                         "content": f"Already called {fn_name}. Pick a different tool or call submit_assessment.",
                     })
                     continue
 
                 tools_called.add(fn_name)
 
-                # Execute the tool
+                # Execute the tool via MCP
                 result = await _run_arsenal_tool(fn_name, fn_args, self._tool_timeout)
                 tool_outputs.append(result)
 
@@ -649,14 +626,12 @@ class ReconAgent:
                     },
                 )
 
-                # Update session with partial results
                 self._update_session_partial(tool_outputs)
 
-                # Feed result back to LLM
                 compact = _compact_tool_result(result)
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": tool_call.id,
+                    "tool_call_id": tc_id,
                     "content": compact,
                 })
 
