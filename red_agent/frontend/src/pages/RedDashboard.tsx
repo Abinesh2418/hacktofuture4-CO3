@@ -4,12 +4,13 @@ import { ActivityPanel } from "@/components/ActivityPanel";
 import { LogStream } from "@/components/LogStream";
 import { MissionBanner } from "@/components/MissionBanner";
 import { useRedWebSocket } from "@/hooks/useRedWebSocket";
+import { redApi } from "@/api/redApi";
 import type { ChatMessage } from "@/types/red.types";
 
 export function RedDashboard() {
   const {
     connected, toolCalls, logs, chatMessages,
-    missionPhase, sendMissionControl, clearToolCalls, clearLogs,
+    missionPhase, sendMissionControl, clearToolCalls, clearLogs, clearAll,
   } = useRedWebSocket();
   const [target, setTarget] = useState("");
 
@@ -97,7 +98,7 @@ export function RedDashboard() {
             {connected ? "LIVE" : "OFF"}
           </span>
           <div style={divider} />
-          <button onClick={() => { clearToolCalls(); clearLogs(); clearChat(); }} style={{
+          <button onClick={() => { clearAll(); clearChat(); redApi.clearMission().catch(() => {}); }} style={{
             fontSize: 9, fontWeight: 700, fontFamily: "var(--font-display)",
             padding: "4px 12px", borderRadius: 4, border: "1px solid var(--red)",
             background: "transparent", color: "var(--red)", cursor: "pointer",

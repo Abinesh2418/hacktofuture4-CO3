@@ -586,6 +586,15 @@ class ReconAgent:
                 # Handle submit_assessment (final answer)
                 if fn_name == "submit_assessment":
                     logger.info("[ReconAgent:%s] agent submitted assessment", self.session_id)
+                    # Fix: NVIDIA NIM Llama sometimes returns stringified
+                    # nested values (e.g. "[{...}]" instead of [{...}]).
+                    # Unwrap them so downstream code sees real lists/dicts.
+                    for key, val in fn_args.items():
+                        if isinstance(val, str):
+                            try:
+                                fn_args[key] = json.loads(val)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
                     final_assessment = json.dumps(fn_args)
                     messages.append({
                         "role": "tool",
@@ -635,7 +644,84 @@ class ReconAgent:
                     "content": compact,
                 })
 
+        # Fallback: if the LLM never called submit_assessment after all
+        # iterations, auto-build an assessment from the raw tool outputs
+        # so the pipeline doesn't stall.
+        if final_assessment == "{}":
+            logger.warning(
+                "[ReconAgent:%s] LLM did not submit assessment after %d iterations, auto-building from tool outputs",
+                self.session_id, MAX_AGENT_ITERATIONS,
+            )
+            final_assessment = json.dumps(self._auto_assessment(tool_outputs))
+
         return final_assessment, tool_outputs
+
+    def _auto_assessment(self, tool_outputs: list[dict]) -> dict:
+        """Build a best-effort assessment from raw tool outputs when the LLM fails."""
+        open_ports: list[int] = []
+        tech_stack: list[str] = []
+        attack_vectors: list[dict] = []
+
+        for out in tool_outputs:
+            tool = out.get("tool") or ""
+            for f in out.get("findings") or []:
+                if not isinstance(f, dict):
+                    continue
+                # nmap findings
+                if f.get("state") == "open" and f.get("port"):
+                    try:
+                        open_ports.append(int(f["port"]))
+                    except (TypeError, ValueError):
+                        pass
+                    svc = " ".join(filter(None, [f.get("product"), f.get("version")]))
+                    if svc and svc not in tech_stack:
+                        tech_stack.append(svc)
+                # gobuster findings → potential attack surfaces
+                if f.get("path") and f.get("status") in (200, 302):
+                    path = "/" + f["path"].lstrip("/")
+                    vtype = "unknown"
+                    if any(k in path.lower() for k in ("login", "auth", "signin")):
+                        vtype = "sql_injection"
+                    elif any(k in path.lower() for k in ("cmd", "exec", "shell", "ping")):
+                        vtype = "command_injection"
+                    elif any(k in path.lower() for k in ("file", "download", "read", "include")):
+                        vtype = "lfi"
+                    elif any(k in path.lower() for k in ("search", "query", "q=")):
+                        vtype = "sql_injection"
+                    if vtype != "unknown":
+                        attack_vectors.append({
+                            "path": path,
+                            "type": vtype,
+                            "priority": "critical" if vtype == "sql_injection" else "high",
+                            "evidence": f"Discovered via gobuster (status {f.get('status')})",
+                            "mitre_technique": "T1190",
+                            "recommended_tool": "sqlmap" if "sql" in vtype else "hydra",
+                        })
+                # nuclei findings
+                if f.get("template_id") or f.get("matched_at"):
+                    severity = f.get("severity", "medium")
+                    attack_vectors.append({
+                        "path": f.get("matched_at", f.get("host", "")),
+                        "type": f.get("template_id", "vulnerability"),
+                        "priority": severity,
+                        "evidence": f.get("info", {}).get("description", f.get("template_id", "")),
+                        "mitre_technique": "T1190",
+                        "recommended_tool": "nuclei",
+                    })
+
+        risk = 0.0
+        if attack_vectors:
+            risk = 8.0 if any(v.get("priority") == "critical" for v in attack_vectors) else 5.0
+        elif open_ports:
+            risk = 3.0
+
+        return {
+            "attack_vectors": attack_vectors,
+            "tech_stack": tech_stack,
+            "open_ports": open_ports,
+            "risk_score": risk,
+            "recommended_exploits": ["sqlmap", "hydra"] if attack_vectors else [],
+        }
 
     def _update_session_partial(self, tool_outputs: list[dict]) -> None:
         duration = (

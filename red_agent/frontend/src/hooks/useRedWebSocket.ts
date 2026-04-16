@@ -132,5 +132,20 @@ export function useRedWebSocket(): RedWsState {
     localStorage.removeItem(STORAGE_KEYS.logs);
   }, []);
 
-  return { connected, toolCalls, logs, chatMessages, missionPhase, sendMissionControl, clearToolCalls, clearLogs };
+  const clearChat = useCallback(() => {
+    setChatMessages([]);
+    localStorage.removeItem(STORAGE_KEYS.chatMessages);
+  }, []);
+
+  const clearAll = useCallback(() => {
+    setToolCalls([]);
+    setLogs([]);
+    setChatMessages([]);
+    setMissionPhase(null);
+    for (const key of Object.values(STORAGE_KEYS)) {
+      localStorage.removeItem(key);
+    }
+  }, []);
+
+  return { connected, toolCalls, logs, chatMessages, missionPhase, sendMissionControl, clearToolCalls, clearLogs, clearChat, clearAll };
 }
