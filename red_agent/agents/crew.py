@@ -1,4 +1,7 @@
-"""Red Team Crew — 3 autonomous agents with PROACTIVE dashboard streaming.
+"""Red Team Crew — 2 autonomous agents with PROACTIVE dashboard streaming.
+
+Agents: Recon Specialist → Exploit Specialist (sequential).
+The orchestrator handles analysis and report generation directly.
 
 Every agent thought, tool call, and decision is streamed to the frontend
 in real-time via WebSocket. The user never has to ask "what's happening."
@@ -15,7 +18,8 @@ from crewai import LLM
 from red_agent.agents.tools import (
     nmap_scan, nuclei_scan, gobuster_scan, katana_crawl,
     dirsearch_scan, httpx_probe, nuclei_exploit, ffuf_fuzz,
-    nmap_vuln_scan, set_active_agent, _broadcast_log, _broadcast_chat,
+    nmap_vuln_scan, set_active_agent,
+    _broadcast_log, _broadcast_chat, _broadcast_tool_event,
 )
 
 _logger = logging.getLogger(__name__)
@@ -39,29 +43,52 @@ def _get_llm() -> LLM:
 # ── Proactive Callbacks — stream agent reasoning to dashboard ──
 
 def _make_step_callback(agent_name: str):
-    """Called on EVERY agent step — streams thought/action to chat."""
+    """Called on EVERY agent step — routes tool events to activity panel,
+    agent thoughts to logs. Raw dumps NEVER go to chat."""
     def callback(step_output):
         set_active_agent(agent_name)
         try:
-            text = str(step_output).encode("ascii", "replace").decode()
-            # Limit length and clean up
-            if len(text) > 400:
-                text = text[:400] + "..."
-            _broadcast_chat(f"**[{agent_name}]** {text}")
-            _broadcast_log("INFO", f"[{agent_name}] step: {text[:150]}")
+            text = str(step_output)
+
+            # Detect tool execution — show as a tool_call card in the activity panel
+            if "ToolResult" in text:
+                # Extract tool result snippet for the log panel only
+                snippet = text.encode("ascii", "replace").decode()[:200]
+                _broadcast_log("INFO", f"[{agent_name}] tool result: {snippet}")
+                return
+
+            if "AgentAction" in text:
+                # Extract the tool name and show a clean log entry
+                tool_name = ""
+                if "tool='" in text:
+                    tool_name = text.split("tool='")[1].split("'")[0]
+                elif 'tool="' in text:
+                    tool_name = text.split('tool="')[1].split('"')[0]
+
+                if tool_name:
+                    _broadcast_log("INFO", f"[{agent_name}] calling: {tool_name}")
+                    # Broadcast as a tool_call card for the activity panel
+                    _broadcast_tool_event(tool_name, "RUNNING", "scan", {
+                        "agent": agent_name,
+                    })
+                return
+
+            # For anything else (pure thought), log it — don't spam chat
+            snippet = text.encode("ascii", "replace").decode()
+            if len(snippet) > 200:
+                snippet = snippet[:200] + "..."
+            _broadcast_log("INFO", f"[{agent_name}] {snippet}")
+
         except Exception as e:
             _logger.warning("step_callback error: %s", e)
     return callback
 
 
 def _make_task_callback(task_name: str):
-    """Called when a task completes — streams result summary to chat."""
+    """Called when a task completes — clean summary to chat, not raw output."""
     def callback(task_output):
         try:
-            raw = str(task_output.raw).encode("ascii", "replace").decode()
-            if len(raw) > 500:
-                raw = raw[:500] + "..."
-            _broadcast_chat(f"**{task_name} Complete**\n\n{raw}")
+            _broadcast_chat(f"**{task_name}** complete.")
             _broadcast_log("INFO", f"{task_name} finished")
         except Exception as e:
             _logger.warning("task_callback error: %s", e)
@@ -90,24 +117,6 @@ def create_recon_agent() -> Agent:
         step_callback=_make_step_callback("Recon Specialist"),
     )
 
-
-def create_analyst_agent() -> Agent:
-    return Agent(
-        role="Security Analyst",
-        goal="Analyze reconnaissance data to identify critical vulnerabilities, "
-             "assess risk levels, and create a prioritized attack plan.",
-        backstory=(
-            "You are a cybersecurity analyst who reviews recon data and identifies "
-            "the most exploitable weaknesses. You prioritize findings by severity "
-            "(critical > high > medium > low) and recommend specific exploitation "
-            "techniques. You always produce a structured risk assessment."
-        ),
-        tools=[],
-        llm=_get_llm(),
-        verbose=True,
-        allow_delegation=False,
-        step_callback=_make_step_callback("Security Analyst"),
-    )
 
 
 def create_exploit_agent() -> Agent:
@@ -148,20 +157,6 @@ def create_recon_task(target: str, recon_agent: Agent) -> Task:
     )
 
 
-def create_analysis_task(target: str, analyst_agent: Agent) -> Task:
-    return Task(
-        description=(
-            f"Analyze recon results for {target}.\n"
-            f"1. Identify critical/high severity findings\n"
-            f"2. Map to MITRE ATT&CK\n"
-            f"3. Risk level (Critical/High/Medium/Low)\n"
-            f"4. Prioritized exploitation plan"
-        ),
-        expected_output="Risk assessment: ranked vulns, MITRE mapping, risk score, exploitation plan.",
-        agent=analyst_agent,
-        callback=_make_task_callback("Analysis Phase"),
-    )
-
 
 def create_exploit_task(target: str, exploit_agent: Agent) -> Task:
     return Task(
@@ -182,14 +177,12 @@ def create_exploit_task(target: str, exploit_agent: Agent) -> Task:
 
 def create_red_team_crew(target: str) -> Crew:
     recon = create_recon_agent()
-    analyst = create_analyst_agent()
     exploit = create_exploit_agent()
 
     return Crew(
-        agents=[recon, analyst, exploit],
+        agents=[recon, exploit],
         tasks=[
             create_recon_task(target, recon),
-            create_analysis_task(target, analyst),
             create_exploit_task(target, exploit),
         ],
         process=Process.sequential,
@@ -203,7 +196,7 @@ async def run_crew_mission(target: str) -> dict:
     import asyncio
     import concurrent.futures
 
-    _logger.info("[CrewAI] Starting Red Team crew against %s", target)
+    _logger.info("[CrewAI] Starting Red Team crew (2 agents) against %s", target)
     set_active_agent("Recon Specialist")
 
     def _run_in_clean_thread():
@@ -221,7 +214,7 @@ async def run_crew_mission(target: str) -> dict:
 
     task_outputs = {}
     for i, task_output in enumerate(result.tasks_output):
-        key = ["recon_output", "analysis_output", "exploit_output"][i] if i < 3 else f"task_{i}"
+        key = ["recon_output", "exploit_output"][i] if i < 2 else f"task_{i}"
         task_outputs[key] = task_output.raw
     task_outputs["final_output"] = result.raw
     return task_outputs

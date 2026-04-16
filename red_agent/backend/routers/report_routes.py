@@ -317,3 +317,43 @@ async def view_report(recon_session_id: str, exploit_id: str | None = None):
         "databases": exploit.databases_found if exploit else [],
         "download_url": f"/report/download/{recon_session_id}",
     }
+
+
+@router.get("/structured/{mission_id}")
+async def get_structured_report(mission_id: str):
+    """Return the structured JSON report for a mission (Blue agent format).
+
+    This is the MITRE ATT&CK-mapped report the orchestrator generates
+    after completing all recon + exploit phases. The Blue Team agent
+    consumes this to auto-generate defense rules and patches.
+    """
+    from red_agent.backend.services.orchestrator import orchestrator
+
+    mission = orchestrator.get_mission(mission_id)
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    if not mission.structured_report:
+        raise HTTPException(status_code=404, detail="Report not yet generated (mission still running?)")
+    return mission.structured_report
+
+
+@router.get("/structured/download/{mission_id}")
+async def download_structured_report(mission_id: str):
+    """Download the structured JSON report as a .json file."""
+    from red_agent.backend.services.orchestrator import orchestrator
+
+    mission = orchestrator.get_mission(mission_id)
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    if not mission.structured_report:
+        raise HTTPException(status_code=404, detail="Report not yet generated")
+
+    report_json = json.dumps(mission.structured_report, indent=2)
+    buffer = BytesIO(report_json.encode("utf-8"))
+    filename = f"{mission.structured_report.get('report_id', mission_id)}.json"
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

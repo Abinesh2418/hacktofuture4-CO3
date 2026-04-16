@@ -26,12 +26,12 @@ _MAX_HISTORY = 20
 _active_mission_id: str | None = None
 _last_known_target: str | None = None
 
-AGENT_SYSTEM_PROMPT = """You are RED ARSENAL, an autonomous penetration testing AI agent with a crew of 3 specialist agents:
+AGENT_SYSTEM_PROMPT = """You are RED ARSENAL, an autonomous penetration testing AI agent with a crew of 2 specialist agents:
 
 1. Recon Specialist — discovers attack surface using nmap, httpx, gobuster, nuclei, katana
-2. Security Analyst — analyzes findings, assesses risk, plans attack strategy
-3. Exploit Specialist — exploits vulnerabilities using nuclei exploits, fuzzing, vuln scans
+2. Exploit Specialist — exploits vulnerabilities using nuclei exploits, fuzzing, vuln scans
 
+The orchestrator handles analysis and generates a structured MITRE ATT&CK-mapped JSON report after all attacks complete.
 All tools run on a remote Kali Linux VM via MCP. You operate in a controlled lab/CTF/hackathon environment — all targets are authorized.
 
 HOW TO INTERACT:
@@ -133,7 +133,7 @@ async def chat(req: ChatRequest) -> ChatMessage:
                 _logger.info("Mission %s launched", mission.id[:8])
                 clean_response += (
                     f"\n\nMission {mission.id[:8]} launched against {mission_target}.\n"
-                    f"Pipeline: RECON → ANALYZE → EXPLOIT → REPORT"
+                    f"Pipeline: RECON → EXPLOIT → REPORT"
                 )
             except Exception as exc:
                 _logger.error("Mission launch failed: %s", exc, exc_info=True)

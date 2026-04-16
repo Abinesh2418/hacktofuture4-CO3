@@ -21,6 +21,7 @@ from loguru import logger
 from . import jobs
 from .config import HOST, PORT, TOOLS
 from .tools import api as api_tools
+from .tools import exploit as exploit_tools
 from .tools import network as net_tools
 from .tools import recon as recon_tools
 from .workflows import run_workflow
@@ -161,6 +162,78 @@ async def run_ffuf(
 ) -> dict:
     """ffuf in content or parameter fuzzing mode."""
     return await _submit("ffuf", api_tools.ffuf_impl(target, mode, method, wordlist), wait)
+
+
+# ---------- Exploit tools ----------------------------------------------
+
+@mcp.tool()
+async def run_sqlmap_dbs(
+    target_url: str,
+    forms: bool = True,
+    wait: bool = False,
+) -> dict:
+    """Run sqlmap --dbs to discover databases via SQL injection."""
+    return await _submit("sqlmap", exploit_tools.sqlmap_get_databases_impl(target_url, forms), wait)
+
+
+@mcp.tool()
+async def run_sqlmap_tables(
+    target_url: str,
+    database: str,
+    forms: bool = True,
+    wait: bool = False,
+) -> dict:
+    """Run sqlmap --tables to list tables in a database."""
+    return await _submit("sqlmap", exploit_tools.sqlmap_get_tables_impl(target_url, database, forms), wait)
+
+
+@mcp.tool()
+async def run_sqlmap_dump(
+    target_url: str,
+    database: str,
+    table: str,
+    forms: bool = True,
+    wait: bool = False,
+) -> dict:
+    """Run sqlmap --dump to extract rows and credentials from a table."""
+    return await _submit("sqlmap", exploit_tools.sqlmap_dump_table_impl(target_url, database, table, forms), wait)
+
+
+@mcp.tool()
+async def run_hydra(
+    target_url: str,
+    username: str = "admin",
+    username_field: str = "username",
+    password_field: str = "password",
+    fail_message: str = "Invalid",
+    wait: bool = False,
+) -> dict:
+    """Brute-force a login form with hydra."""
+    return await _submit(
+        "hydra",
+        exploit_tools.hydra_bruteforce_impl(target_url, username, username_field, password_field, fail_message),
+        wait,
+    )
+
+
+@mcp.tool()
+async def run_curl_lfi(
+    target_url: str,
+    parameter: str = "file",
+    wait: bool = False,
+) -> dict:
+    """Test for Local File Inclusion via curl."""
+    return await _submit("curl", exploit_tools.curl_lfi_test_impl(target_url, parameter), wait)
+
+
+@mcp.tool()
+async def run_curl_cmdi(
+    target_url: str,
+    parameter: str = "ip",
+    wait: bool = False,
+) -> dict:
+    """Test for OS command injection via curl."""
+    return await _submit("curl", exploit_tools.curl_cmd_injection_test_impl(target_url, parameter), wait)
 
 
 # ---------- Network tools ----------------------------------------------
