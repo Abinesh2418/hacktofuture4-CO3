@@ -6,9 +6,10 @@ import asyncio
 import uuid
 from collections import deque
 from datetime import datetime
-from typing import Any, Callable, Deque, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 from blue_agent.backend.schemas.blue_schemas import (
+    ApprovalResult,
     AssetInfo,
     BlueAgentStatus,
     ClosePortRequest,
@@ -22,6 +23,7 @@ from blue_agent.backend.schemas.blue_schemas import (
     LogEntry,
     PatchRequest,
     PatchResult,
+    PendingFix,
     RedReportRequest,
     RemediationResult,
     RemediationStatus,
@@ -73,7 +75,7 @@ def _broadcast(payload: dict) -> None:
             pass
 
 
-def add_log(message: str, level: str = "INFO", tool_id: str | None = None) -> LogEntry:
+def add_log(message: str, level: str = "INFO", tool_id: Optional[str] = None) -> LogEntry:
     """Add a log entry and broadcast it to all dashboard clients."""
     entry = LogEntry(level=level, message=message, tool_id=tool_id)
     _LOG_HISTORY.append(entry)
@@ -81,7 +83,7 @@ def add_log(message: str, level: str = "INFO", tool_id: str | None = None) -> Lo
     return entry
 
 
-def _new_tool_call(name: str, category: str, params: dict[str, Any]) -> ToolCall:
+def _new_tool_call(name: str, category: str, params: Dict[str, Any]) -> ToolCall:
     call = ToolCall(
         id=str(uuid.uuid4()),
         name=name,
@@ -94,7 +96,7 @@ def _new_tool_call(name: str, category: str, params: dict[str, Any]) -> ToolCall
     return call
 
 
-def _finish(call: ToolCall, result: dict[str, Any], status: ToolStatus = ToolStatus.DONE) -> ToolCall:
+def _finish(call: ToolCall, result: Dict[str, Any], status: ToolStatus = ToolStatus.DONE) -> ToolCall:
     call.status = status
     call.result = result
     call.finished_at = datetime.utcnow()
@@ -204,7 +206,7 @@ def _create_scan_tool(name: str, params: dict, result: dict, status: str = "DONE
 
 # ── Asset scanning endpoints ─────────────────────────────────────────
 
-async def get_asset_inventory(environment: str | None = None) -> list:
+async def get_asset_inventory(environment: Optional[str] = None) -> list:
     if environment:
         by_env = _asset_scanner.get_inventory_by_environment()
         items = by_env.get(environment, [])
@@ -240,7 +242,7 @@ async def get_all_vulnerabilities() -> list:
 
 # ── Environment monitoring endpoints ─────────────────────────────────
 
-async def get_environment_alerts(environment: str | None = None) -> list:
+async def get_environment_alerts(environment: Optional[str] = None) -> list:
     items = _environment_manager.get_alerts(environment=environment)
     return [EnvironmentAlertInfo(**item) for item in items]
 
@@ -295,9 +297,35 @@ def get_ssh_scan_stats() -> dict:
     return _ssh_scanner.get_stats()
 
 
+# ── Approval workflow endpoints ──────────────────────────────────────
+
+async def get_pending_fixes() -> List[PendingFix]:
+    """Return all fixes currently awaiting user approval."""
+    items = _remediation_engine.get_pending_fixes()
+    return [PendingFix(**item) for item in items]
+
+
+async def approve_fix(fix_id: str) -> ApprovalResult:
+    """Approve and apply a single pending fix."""
+    result = await _remediation_engine.approve_fix(fix_id)
+    return ApprovalResult(**result)
+
+
+async def approve_all_fixes() -> List[ApprovalResult]:
+    """Approve and apply every pending fix."""
+    results = await _remediation_engine.approve_all()
+    return [ApprovalResult(**r) for r in results]
+
+
+async def reject_fix(fix_id: str) -> ApprovalResult:
+    """Reject a pending fix, removing it from the queue."""
+    result = _remediation_engine.reject_fix(fix_id)
+    return ApprovalResult(**result)
+
+
 # ── History endpoints ────────────────────────────────────────────────
 
-async def recent_tool_calls(category: str | None = None, limit: int = 20) -> list:
+async def recent_tool_calls(category: Optional[str] = None, limit: int = 20) -> list:
     items = list(_TOOL_HISTORY)
     if category:
         items = [c for c in items if c.category == category]

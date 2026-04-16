@@ -15,7 +15,10 @@ import os
 import time
 from typing import Any
 
-from fastmcp import Client
+try:
+    from fastmcp import Client
+except ImportError:
+    Client = None  # type: ignore
 from loguru import logger
 
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://127.0.0.1:8765/sse")

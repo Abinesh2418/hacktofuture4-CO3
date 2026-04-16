@@ -1,0 +1,1 @@
+class CloudScanner: pass

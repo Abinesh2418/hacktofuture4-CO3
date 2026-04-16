@@ -1,6 +1,6 @@
+from __future__ import annotations
 """Report generation and download endpoints."""
 
-from __future__ import annotations
 
 import json
 from datetime import datetime, timezone

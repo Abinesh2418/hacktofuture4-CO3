@@ -1,10 +1,14 @@
-"""Remediation endpoints — Red report ingestion and fix pipeline."""
+"""Remediation endpoints — Red report ingestion, fix pipeline, and approval workflow."""
+
+from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from blue_agent.backend.schemas.blue_schemas import (
+    ApprovalResult,
+    PendingFix,
     RedReportRequest,
     RemediationResult,
     RemediationStatus,
@@ -44,3 +48,36 @@ async def remediation_status() -> RemediationStatus:
 @router.get("/recent", response_model=List[ToolCall])
 async def recent_remediation_actions(limit: int = 20) -> List[ToolCall]:
     return await blue_service.recent_tool_calls(category="remediation", limit=limit)
+
+
+# ── Approval workflow endpoints ─────────────────────────────────────
+
+
+@router.get("/pending", response_model=List[PendingFix])
+async def pending_fixes() -> List[PendingFix]:
+    """Return all fixes currently awaiting user approval."""
+    return await blue_service.get_pending_fixes()
+
+
+@router.post("/approve/{fix_id}", response_model=ApprovalResult)
+async def approve_fix(fix_id: str) -> ApprovalResult:
+    """Approve and apply a single pending fix."""
+    try:
+        return await blue_service.approve_fix(fix_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/approve-all", response_model=List[ApprovalResult])
+async def approve_all_fixes() -> List[ApprovalResult]:
+    """Approve and apply all pending fixes at once."""
+    return await blue_service.approve_all_fixes()
+
+
+@router.post("/reject/{fix_id}", response_model=ApprovalResult)
+async def reject_fix(fix_id: str) -> ApprovalResult:
+    """Reject a pending fix, removing it from the queue."""
+    try:
+        return await blue_service.reject_fix(fix_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))

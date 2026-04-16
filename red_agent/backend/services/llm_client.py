@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Unified NVIDIA NIM LLM client for all three agents.
 
 Provides:
@@ -6,7 +7,6 @@ Provides:
 - tool_call()     → function-calling loop (ReconAgent + ExploitAgent)
 """
 
-from __future__ import annotations
 
 import json
 import logging

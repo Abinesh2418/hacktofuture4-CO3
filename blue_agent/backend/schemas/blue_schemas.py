@@ -1,5 +1,7 @@
 """Request / response models for the Blue Agent backend."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -241,3 +243,23 @@ class RemediationStatus(BaseModel):
     fixes_dispatched: int = 0
     total_steps: int = 0
     applied_fixes: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ── Approval Workflow ──────────────────────────────────────────────
+
+class PendingFix(BaseModel):
+    """A fix awaiting user approval before it is applied."""
+    fix_id: str
+    category: str
+    severity: str
+    description: str
+    endpoint: Optional[str] = None
+    status: str = "pending_approval"
+    finding_details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalResult(BaseModel):
+    """Result of approving or rejecting a pending fix."""
+    fix_id: str
+    status: str  # "approved" or "rejected"
+    fix_result: Optional[Dict[str, Any]] = None

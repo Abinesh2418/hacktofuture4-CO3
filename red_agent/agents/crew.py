@@ -13,8 +13,13 @@ from __future__ import annotations
 import logging
 import os
 
-from crewai import Agent, Crew, Task, Process
-from crewai import LLM
+try:
+    from crewai import Agent, Crew, Task, Process
+    from crewai import LLM
+    HAS_CREWAI = True
+except ImportError:
+    Agent = Crew = Task = Process = LLM = None  # type: ignore
+    HAS_CREWAI = False
 
 from red_agent.agents.tools import (
     nmap_scan,
@@ -200,21 +205,19 @@ def create_red_team_crew(target: str) -> Crew:
 async def run_crew_mission(target: str) -> dict:
     """Run the full Red Team crew and return results.
 
-    Sets the active agent name before kickoff so tool wrappers can
-    tag their WebSocket events with the correct agent name.
+    Falls back to the standalone recon/exploit agents if CrewAI is not installed.
     """
+    if not HAS_CREWAI:
+        _logger.warning("[CrewAI] Not installed — falling back to standalone agents")
+        return await _fallback_mission(target)
+
     import asyncio
     from red_agent.agents.tools import set_active_agent
 
     _logger.info("[CrewAI] Starting Red Team crew against %s", target)
-
-    # Set initial agent
     set_active_agent("Recon Specialist")
-
     crew = create_red_team_crew(target)
 
-    # CrewAI kickoff is sync — run in executor
-    # The agent transitions happen inside CrewAI, we track via tool calls
     def _run():
         set_active_agent("Recon Specialist")
         return crew.kickoff()
@@ -231,3 +234,39 @@ async def run_crew_mission(target: str) -> dict:
 
     task_outputs["final_output"] = result.raw
     return task_outputs
+
+
+async def _fallback_mission(target: str) -> dict:
+    """Run standalone Groq-based recon + exploit agents when CrewAI is unavailable."""
+    results = {}
+
+    # Try the standalone recon agent
+    try:
+        from red_agent.scanner.recon_agent import run_recon
+        _logger.info("[Fallback] Running standalone recon agent against %s", target)
+        recon = await run_recon(target)
+        results["recon_output"] = recon.get("summary", str(recon))
+        results["recon_result"] = recon
+    except Exception as exc:
+        _logger.warning("[Fallback] Recon agent failed: %s", exc)
+        results["recon_output"] = f"Recon failed: {exc}"
+
+    # Try the standalone exploit agent
+    try:
+        from red_agent.exploiter.exploit_agent import run_exploit
+        _logger.info("[Fallback] Running standalone exploit agent against %s", target)
+        exploit = await run_exploit(target, context=results.get("recon_result"))
+        results["exploit_output"] = exploit.get("summary", str(exploit))
+        results["exploit_result"] = exploit
+    except Exception as exc:
+        _logger.warning("[Fallback] Exploit agent failed: %s", exc)
+        results["exploit_output"] = f"Exploit failed: {exc}"
+
+    results["analysis_output"] = "Analysis performed by standalone agents (CrewAI unavailable)"
+    results["final_output"] = (
+        f"Penetration Test Report (Standalone Mode)\n"
+        f"Target: {target}\n\n"
+        f"RECON:\n{results.get('recon_output', 'N/A')}\n\n"
+        f"EXPLOIT:\n{results.get('exploit_output', 'N/A')}"
+    )
+    return results

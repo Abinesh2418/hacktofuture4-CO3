@@ -1,9 +1,3 @@
-"""Chat endpoint — all LLM calls are synchronous (NVIDIA Llama 70B is fast ~3s).
-
-No background tasks — the endpoint awaits the LLM directly and returns the
-response. Missions are launched as async tasks from within the endpoint.
-"""
-
 from __future__ import annotations
 
 import asyncio

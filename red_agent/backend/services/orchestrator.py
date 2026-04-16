@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Mission orchestrator — runs a CrewAI Red Team crew.
 
 Pipeline:
@@ -6,7 +7,6 @@ Pipeline:
   3. Final report delivered to chat
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

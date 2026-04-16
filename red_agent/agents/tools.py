@@ -16,7 +16,14 @@ import uuid
 from datetime import datetime
 from urllib.parse import urlparse
 
-from crewai.tools import tool
+try:
+    from crewai.tools import tool
+except ImportError:
+    def tool(func=None, **_):  # type: ignore
+        """Fallback decorator when crewai is not installed."""
+        if func is None or isinstance(func, str):
+            return lambda f: f
+        return func
 
 _logger = logging.getLogger(__name__)
 

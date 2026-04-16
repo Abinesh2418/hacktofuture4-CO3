@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Request / response models for the Red Agent backend."""
 
 from datetime import datetime

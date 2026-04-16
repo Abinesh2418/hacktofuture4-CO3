@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Scan endpoints for the Red Agent."""
 
 from fastapi import APIRouter, HTTPException

@@ -8,13 +8,20 @@ websockets==13.1
 loguru==0.7.2
 paramiko==3.4.0
 
-# CrewAI multi-agent framework
-crewai>=1.14.0
+# CrewAI multi-agent framework (requires Python 3.10+ — optional)
+# crewai>=1.14.0
 openai>=1.0.0
 xmltodict>=0.13.0
 
-# MCP client
-fastmcp>=0.4.0
+# MCP client (optional)
+# fastmcp>=0.4.0
+
+# Auth service
+pyotp>=2.9.0
+qrcode>=7.4
+PyJWT>=2.8.0
+bcrypt>=4.1.0
+Pillow>=10.0.0
 
 # Tests
 pytest>=7.0.0

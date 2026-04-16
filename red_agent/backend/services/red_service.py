@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Bridge between the HTTP/WS layer and the Red agent's domain modules.
 
 This module is intentionally the *only* place the backend talks to the
@@ -5,7 +6,6 @@ underlying scanner/exploiter/strategy packages, so the agent core stays
 decoupled from the FastAPI surface.
 """
 
-from __future__ import annotations
 
 import logging
 import uuid

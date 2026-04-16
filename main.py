@@ -1,6 +1,6 @@
 """HTF root entry point.
 
-Launches both Red (8001) and Blue (8002) FastAPI backends in parallel.
+Launches Red (8001), Blue (8002), and Auth (8003) FastAPI backends in parallel.
 Frontends are started independently via npm run dev.
 """
 
@@ -10,6 +10,7 @@ import asyncio
 
 import uvicorn
 
+from auth_service.main import AUTH_API_PORT, app as auth_app
 from blue_agent.backend.main import BLUE_API_PORT, app as blue_app
 from red_agent.backend.main import RED_API_PORT, app as red_app
 
@@ -24,6 +25,7 @@ async def main() -> None:
     await asyncio.gather(
         _serve(red_app, RED_API_PORT),
         _serve(blue_app, BLUE_API_PORT),
+        _serve(auth_app, AUTH_API_PORT),
     )
 
 
