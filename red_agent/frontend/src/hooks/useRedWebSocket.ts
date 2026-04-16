@@ -25,14 +25,45 @@ const MAX_TOOL_CALLS = 50;
 const MAX_LOGS = 300;
 const MAX_CHAT = 200;
 
+// ── localStorage helpers ──
+const STORAGE_KEYS = {
+  toolCalls: "red_arsenal_tools",
+  logs: "red_arsenal_logs",
+  chatMessages: "red_arsenal_chat",
+  missionPhase: "red_arsenal_phase",
+};
+
+function loadFromStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveToStorage<T>(key: string, data: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // localStorage full or unavailable — ignore
+  }
+}
+
 export function useRedWebSocket(): RedWsState {
   const [connected, setConnected] = useState(false);
-  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [missionPhase, setMissionPhase] = useState<MissionPhaseUpdate | null>(null);
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>(() => loadFromStorage(STORAGE_KEYS.toolCalls, []));
+  const [logs, setLogs] = useState<LogEntry[]>(() => loadFromStorage(STORAGE_KEYS.logs, []));
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => loadFromStorage(STORAGE_KEYS.chatMessages, []));
+  const [missionPhase, setMissionPhase] = useState<MissionPhaseUpdate | null>(() => loadFromStorage(STORAGE_KEYS.missionPhase, null));
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
+
+  // Persist to localStorage on every state change
+  useEffect(() => { saveToStorage(STORAGE_KEYS.toolCalls, toolCalls); }, [toolCalls]);
+  useEffect(() => { saveToStorage(STORAGE_KEYS.logs, logs); }, [logs]);
+  useEffect(() => { saveToStorage(STORAGE_KEYS.chatMessages, chatMessages); }, [chatMessages]);
+  useEffect(() => { saveToStorage(STORAGE_KEYS.missionPhase, missionPhase); }, [missionPhase]);
 
   const sendMissionControl = useCallback((action: string, missionId: string) => {
     const ws = wsRef.current;
@@ -91,8 +122,15 @@ export function useRedWebSocket(): RedWsState {
     };
   }, []);
 
-  const clearToolCalls = useCallback(() => setToolCalls([]), []);
-  const clearLogs = useCallback(() => setLogs([]), []);
+  const clearToolCalls = useCallback(() => {
+    setToolCalls([]);
+    localStorage.removeItem(STORAGE_KEYS.toolCalls);
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setLogs([]);
+    localStorage.removeItem(STORAGE_KEYS.logs);
+  }, []);
 
   return { connected, toolCalls, logs, chatMessages, missionPhase, sendMissionControl, clearToolCalls, clearLogs };
 }

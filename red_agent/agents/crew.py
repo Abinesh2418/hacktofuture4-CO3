@@ -1,11 +1,7 @@
-"""Red Team Crew — 3 autonomous agents managed by CrewAI.
+"""Red Team Crew — 3 autonomous agents with PROACTIVE dashboard streaming.
 
-Agents:
-  1. ReconAgent     — discovers attack surface using Kali tools via MCP
-  2. AnalystAgent   — analyzes findings, assesses risk, plans attack
-  3. ExploitAgent   — exploits discovered vulnerabilities
-
-All agents use NVIDIA NIM (Llama 70B) via OpenAI-compatible API.
+Every agent thought, tool call, and decision is streamed to the frontend
+in real-time via WebSocket. The user never has to ask "what's happening."
 """
 
 from __future__ import annotations
@@ -17,26 +13,21 @@ from crewai import Agent, Crew, Task, Process
 from crewai import LLM
 
 from red_agent.agents.tools import (
-    nmap_scan,
-    nuclei_scan,
-    gobuster_scan,
-    katana_crawl,
-    dirsearch_scan,
-    httpx_probe,
-    nuclei_exploit,
-    ffuf_fuzz,
-    nmap_vuln_scan,
+    nmap_scan, nuclei_scan, gobuster_scan, katana_crawl,
+    dirsearch_scan, httpx_probe, nuclei_exploit, ffuf_fuzz,
+    nmap_vuln_scan, set_active_agent, _broadcast_log, _broadcast_chat,
 )
 
 _logger = logging.getLogger(__name__)
 
-# ── LLM Configuration (NVIDIA NIM via OpenAI-compatible API) ──
+# Force litellm to use sync httpx (avoids deadlock inside uvicorn executor)
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+os.environ["OPENAI_API_BASE"] = ""  # Prevent litellm from picking up wrong base
 
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
 
 
 def _get_llm() -> LLM:
-    """NVIDIA NIM Llama 3.1 70B — used by Recon + Analyst agents."""
     return LLM(
         model="openai/meta/llama-3.1-70b-instruct",
         base_url="https://integrate.api.nvidia.com/v1",
@@ -45,22 +36,36 @@ def _get_llm() -> LLM:
     )
 
 
-AZURE_API_KEY = os.environ.get("AZURE_API_KEY", "")
-AZURE_ENDPOINT = os.environ.get(
-    "AZURE_ENDPOINT",
-    "https://abineshbalasubramaniyam-resource.cognitiveservices.azure.com/",
-)
+# ── Proactive Callbacks — stream agent reasoning to dashboard ──
+
+def _make_step_callback(agent_name: str):
+    """Called on EVERY agent step — streams thought/action to chat."""
+    def callback(step_output):
+        set_active_agent(agent_name)
+        try:
+            text = str(step_output).encode("ascii", "replace").decode()
+            # Limit length and clean up
+            if len(text) > 400:
+                text = text[:400] + "..."
+            _broadcast_chat(f"**[{agent_name}]** {text}")
+            _broadcast_log("INFO", f"[{agent_name}] step: {text[:150]}")
+        except Exception as e:
+            _logger.warning("step_callback error: %s", e)
+    return callback
 
 
-def _get_exploit_llm() -> LLM:
-    """Azure GPT-4o — used by Exploit agent for stronger reasoning."""
-    return LLM(
-        model="azure/gpt-4o",
-        api_key=AZURE_API_KEY,
-        base_url=AZURE_ENDPOINT,
-        api_version="2024-12-01-preview",
-        temperature=0.2,
-    )
+def _make_task_callback(task_name: str):
+    """Called when a task completes — streams result summary to chat."""
+    def callback(task_output):
+        try:
+            raw = str(task_output.raw).encode("ascii", "replace").decode()
+            if len(raw) > 500:
+                raw = raw[:500] + "..."
+            _broadcast_chat(f"**{task_name} Complete**\n\n{raw}")
+            _broadcast_log("INFO", f"{task_name} finished")
+        except Exception as e:
+            _logger.warning("task_callback error: %s", e)
+    return callback
 
 
 # ── Agent Definitions ──
@@ -82,6 +87,7 @@ def create_recon_agent() -> Agent:
         verbose=True,
         allow_delegation=False,
         max_iter=5,
+        step_callback=_make_step_callback("Recon Specialist"),
     )
 
 
@@ -100,6 +106,7 @@ def create_analyst_agent() -> Agent:
         llm=_get_llm(),
         verbose=True,
         allow_delegation=False,
+        step_callback=_make_step_callback("Security Analyst"),
     )
 
 
@@ -115,10 +122,11 @@ def create_exploit_agent() -> Agent:
             "nmap scripts. You document all evidence of exploitation."
         ),
         tools=[nuclei_exploit, ffuf_fuzz, nmap_vuln_scan, nmap_scan],
-        llm=_get_exploit_llm(),
+        llm=_get_llm(),
         verbose=True,
         allow_delegation=False,
         max_iter=5,
+        step_callback=_make_step_callback("Exploit Specialist"),
     )
 
 
@@ -128,121 +136,92 @@ def create_recon_task(target: str, recon_agent: Agent) -> Task:
     return Task(
         description=(
             f"Perform full reconnaissance on target: {target}\n\n"
-            f"Steps:\n"
             f"1. Run nmap_scan on {target} to discover open ports and services\n"
             f"2. If web ports found (80/443/5000/8080), run httpx_probe\n"
             f"3. Run gobuster_scan to discover directories and hidden files\n"
             f"4. Run nuclei_scan to detect vulnerabilities\n\n"
-            f"Report ALL findings: open ports, services, technologies, directories, "
-            f"and any vulnerabilities detected."
+            f"Report ALL findings."
         ),
-        expected_output=(
-            "A structured recon report with:\n"
-            "- Open ports and services\n"
-            "- Web technologies detected\n"
-            "- Discovered directories and files\n"
-            "- Vulnerability findings from nuclei\n"
-            "- Overall attack surface assessment"
-        ),
+        expected_output="Structured recon report: open ports, services, directories, vulnerabilities.",
         agent=recon_agent,
+        callback=_make_task_callback("Recon Phase"),
     )
 
 
 def create_analysis_task(target: str, analyst_agent: Agent) -> Task:
     return Task(
         description=(
-            f"Analyze the reconnaissance results for {target} from the previous task.\n\n"
-            f"1. Identify all critical and high severity findings\n"
-            f"2. Map vulnerabilities to MITRE ATT&CK techniques\n"
-            f"3. Assess overall risk level (Critical/High/Medium/Low)\n"
-            f"4. Recommend top 3-5 exploitation targets in priority order\n"
-            f"5. Suggest specific tools and techniques for each exploitation target"
+            f"Analyze recon results for {target}.\n"
+            f"1. Identify critical/high severity findings\n"
+            f"2. Map to MITRE ATT&CK\n"
+            f"3. Risk level (Critical/High/Medium/Low)\n"
+            f"4. Prioritized exploitation plan"
         ),
-        expected_output=(
-            "A risk assessment report with:\n"
-            "- Severity-ranked vulnerability list\n"
-            "- MITRE ATT&CK mapping\n"
-            "- Risk score (0-10)\n"
-            "- Prioritized exploitation plan\n"
-            "- Recommended tools per vulnerability"
-        ),
+        expected_output="Risk assessment: ranked vulns, MITRE mapping, risk score, exploitation plan.",
         agent=analyst_agent,
+        callback=_make_task_callback("Analysis Phase"),
     )
 
 
 def create_exploit_task(target: str, exploit_agent: Agent) -> Task:
     return Task(
         description=(
-            f"Exploit the vulnerabilities found in {target} based on the analysis.\n\n"
-            f"1. Use nuclei_exploit to verify and exploit critical vulnerabilities\n"
-            f"2. Use ffuf_fuzz to discover hidden parameters or endpoints\n"
-            f"3. Use nmap_vuln_scan for service-specific vulnerability checks\n"
-            f"4. Document all successful exploits with evidence\n\n"
-            f"Focus on proving IMPACT — data extraction, unauthorized access, etc."
+            f"Exploit vulnerabilities in {target} based on analysis.\n"
+            f"1. nuclei_exploit to verify critical vulns\n"
+            f"2. ffuf_fuzz for hidden params\n"
+            f"3. nmap_vuln_scan for service vulns\n"
+            f"4. Document all exploits with evidence"
         ),
-        expected_output=(
-            "An exploitation report with:\n"
-            "- Confirmed vulnerabilities with evidence\n"
-            "- Data/credentials extracted (if any)\n"
-            "- Proof of exploitation\n"
-            "- Impact assessment\n"
-            "- Recommendations for remediation"
-        ),
+        expected_output="Exploitation report: confirmed vulns, extracted data, impact, remediation.",
         agent=exploit_agent,
+        callback=_make_task_callback("Exploit Phase"),
     )
 
 
 # ── Crew Factory ──
 
 def create_red_team_crew(target: str) -> Crew:
-    """Create a full Red Team crew for the given target."""
     recon = create_recon_agent()
     analyst = create_analyst_agent()
     exploit = create_exploit_agent()
 
-    recon_task = create_recon_task(target, recon)
-    analysis_task = create_analysis_task(target, analyst)
-    exploit_task = create_exploit_task(target, exploit)
-
     return Crew(
         agents=[recon, analyst, exploit],
-        tasks=[recon_task, analysis_task, exploit_task],
+        tasks=[
+            create_recon_task(target, recon),
+            create_analysis_task(target, analyst),
+            create_exploit_task(target, exploit),
+        ],
         process=Process.sequential,
         verbose=True,
+        step_callback=lambda step: _broadcast_log("INFO", f"[Crew] {str(step)[:100]}"),
+        task_callback=lambda output: _broadcast_log("INFO", f"[Crew] Task done"),
     )
 
 
 async def run_crew_mission(target: str) -> dict:
-    """Run the full Red Team crew and return results.
-
-    Sets the active agent name before kickoff so tool wrappers can
-    tag their WebSocket events with the correct agent name.
-    """
     import asyncio
-    from red_agent.agents.tools import set_active_agent
+    import concurrent.futures
 
     _logger.info("[CrewAI] Starting Red Team crew against %s", target)
-
-    # Set initial agent
     set_active_agent("Recon Specialist")
 
-    crew = create_red_team_crew(target)
-
-    # CrewAI kickoff is sync — run in executor
-    # The agent transitions happen inside CrewAI, we track via tool calls
-    def _run():
+    def _run_in_clean_thread():
+        """Run crew in a completely isolated thread with no parent event loop."""
         set_active_agent("Recon Specialist")
+        crew = create_red_team_crew(target)
         return crew.kickoff()
 
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _run)
+    # Use a dedicated thread pool (not uvicorn's executor) to avoid event loop conflicts
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="crewai") as pool:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(pool, _run_in_clean_thread)
 
-    _logger.info("[CrewAI] Crew finished: %s", str(result)[:200])
+    _logger.info("[CrewAI] Crew finished")
 
     task_outputs = {}
     for i, task_output in enumerate(result.tasks_output):
         key = ["recon_output", "analysis_output", "exploit_output"][i] if i < 3 else f"task_{i}"
         task_outputs[key] = task_output.raw
-
     task_outputs["final_output"] = result.raw
     return task_outputs

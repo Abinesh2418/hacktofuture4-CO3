@@ -80,6 +80,33 @@ def _broadcast_tool_event(tool_name: str, status: str, category: str, params: di
         _logger.warning("Failed to broadcast tool event: %s", e)
 
 
+def _broadcast_chat(content: str) -> None:
+    """Broadcast a chat message to the dashboard (proactive agent updates)."""
+    try:
+        from red_agent.backend.websocket.red_ws import manager
+        import uuid as _uuid
+        from datetime import datetime as _dt
+
+        payload = {
+            "type": "chat_response",
+            "payload": {
+                "id": str(_uuid.uuid4()),
+                "role": "agent",
+                "content": content,
+                "timestamp": _dt.utcnow().isoformat(),
+                "tool_calls": [],
+            },
+        }
+
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(manager.broadcast(payload), loop)
+        except RuntimeError:
+            asyncio.run(manager.broadcast(payload))
+    except Exception as e:
+        _logger.warning("Failed to broadcast chat: %s", e)
+
+
 def _broadcast_log(level: str, message: str) -> None:
     """Broadcast a log entry to the dashboard."""
     try:

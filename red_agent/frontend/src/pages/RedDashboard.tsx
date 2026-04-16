@@ -13,9 +13,16 @@ export function RedDashboard() {
   } = useRedWebSocket();
   const [target, setTarget] = useState("");
 
-  // ── Single ordered chat list (fixes ordering bug) ──
-  const [chatList, setChatList] = useState<ChatMessage[]>([]);
-  const seenIds = useRef(new Set<string>());
+  // ── Single ordered chat list — persisted in localStorage ──
+  const [chatList, setChatList] = useState<ChatMessage[]>(() => {
+    try {
+      const raw = localStorage.getItem("red_arsenal_chatlist");
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+  const seenIds = useRef(new Set<string>(
+    (() => { try { const raw = localStorage.getItem("red_arsenal_chatlist"); return raw ? (JSON.parse(raw) as ChatMessage[]).map(m => m.id) : []; } catch { return []; } })()
+  ));
 
   // Append new local messages
   const handleNewMessage = useCallback((msg: ChatMessage) => {
@@ -33,6 +40,17 @@ export function RedDashboard() {
       }
     }
   }, [chatMessages]);
+
+  // Persist chat list to localStorage
+  useEffect(() => {
+    try { localStorage.setItem("red_arsenal_chatlist", JSON.stringify(chatList)); } catch {}
+  }, [chatList]);
+
+  const clearChat = useCallback(() => {
+    setChatList([]);
+    seenIds.current.clear();
+    localStorage.removeItem("red_arsenal_chatlist");
+  }, []);
 
   const missionId = missionPhase?.mission_id;
   const running = toolCalls.filter((t) => t.status === "RUNNING").length;
@@ -78,6 +96,13 @@ export function RedDashboard() {
           <span style={{ fontSize: 10, color: connected ? "var(--green)" : "var(--red)" }}>
             {connected ? "LIVE" : "OFF"}
           </span>
+          <div style={divider} />
+          <button onClick={() => { clearToolCalls(); clearLogs(); clearChat(); }} style={{
+            fontSize: 9, fontWeight: 700, fontFamily: "var(--font-display)",
+            padding: "4px 12px", borderRadius: 4, border: "1px solid var(--red)",
+            background: "transparent", color: "var(--red)", cursor: "pointer",
+            letterSpacing: 1,
+          }}>CLEAR ALL</button>
         </div>
       </header>
 
@@ -102,6 +127,7 @@ export function RedDashboard() {
             chatMessages={chatList}
             target={target}
             onNewMessage={handleNewMessage}
+            onClear={clearChat}
           />
         </div>
 

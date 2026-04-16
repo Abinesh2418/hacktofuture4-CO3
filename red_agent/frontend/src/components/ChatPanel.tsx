@@ -6,6 +6,7 @@ interface ChatPanelProps {
   chatMessages: ChatMessage[];
   target: string;
   onNewMessage: (msg: ChatMessage) => void;
+  onClear?: () => void;
 }
 
 function formatTime(ts: string): string {
@@ -13,7 +14,7 @@ function formatTime(ts: string): string {
   return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-export function ChatPanel({ chatMessages, target, onNewMessage }: ChatPanelProps) {
+export function ChatPanel({ chatMessages, target, onNewMessage, onClear }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -81,6 +82,14 @@ export function ChatPanel({ chatMessages, target, onNewMessage }: ChatPanelProps
         </div>
         <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-ui)" }}>
           {chatMessages.length} messages
+          {chatMessages.length > 0 && onClear && (
+            <button onClick={onClear} style={{
+              fontSize: 8, fontWeight: 700, fontFamily: "var(--font-display)",
+              padding: "2px 8px", borderRadius: 3, border: "1px solid var(--red)",
+              background: "transparent", color: "var(--red)", cursor: "pointer",
+              letterSpacing: 1, marginLeft: 6,
+            }}>CLEAR</button>
+          )}
         </span>
       </div>
 
