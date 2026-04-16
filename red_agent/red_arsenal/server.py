@@ -23,6 +23,7 @@ from .config import HOST, PORT, TOOLS
 from .tools import api as api_tools
 from .tools import network as net_tools
 from .tools import recon as recon_tools
+from .tools import sqlmap as sqlmap_tools
 from .workflows import run_workflow
 
 mcp = FastMCP(name="red-arsenal")
@@ -161,6 +162,61 @@ async def run_ffuf(
 ) -> dict:
     """ffuf in content or parameter fuzzing mode."""
     return await _submit("ffuf", api_tools.ffuf_impl(target, mode, method, wordlist), wait)
+
+
+# ---------- SQL injection (sqlmap) -------------------------------------
+
+@mcp.tool()
+async def run_sqlmap_detect(
+    target: str,
+    level: int = 2,
+    risk: int = 2,
+    crawl: int = 2,
+    wait: bool = False,
+) -> dict:
+    """Crawl + detect SQLi in any param/form on the target URL."""
+    return await _submit("sqlmap_detect", sqlmap_tools.sqlmap_detect_impl(target, level, risk, crawl), wait)
+
+
+@mcp.tool()
+async def run_sqlmap_dbs(
+    target: str,
+    level: int = 2,
+    risk: int = 2,
+    wait: bool = False,
+) -> dict:
+    """List databases on an injectable target URL."""
+    return await _submit("sqlmap_dbs", sqlmap_tools.sqlmap_dbs_impl(target, level, risk), wait)
+
+
+@mcp.tool()
+async def run_sqlmap_tables(
+    target: str,
+    db: str = "",
+    level: int = 2,
+    risk: int = 2,
+    wait: bool = False,
+) -> dict:
+    """List tables in `db`. Pass db="" for SQLite (single-file engines)."""
+    return await _submit("sqlmap_tables", sqlmap_tools.sqlmap_tables_impl(target, db, level, risk), wait)
+
+
+@mcp.tool()
+async def run_sqlmap_dump(
+    target: str,
+    db: str | None = None,
+    table: str | None = None,
+    dump_all: bool = False,
+    level: int = 2,
+    risk: int = 2,
+    wait: bool = False,
+) -> dict:
+    """Dump rows. Pass dump_all=True to dump every table in every (non-system) db."""
+    return await _submit(
+        "sqlmap_dump",
+        sqlmap_tools.sqlmap_dump_impl(target, db, table, dump_all, level, risk),
+        wait,
+    )
 
 
 # ---------- Network tools ----------------------------------------------

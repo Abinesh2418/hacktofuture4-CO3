@@ -48,7 +48,7 @@ export function ActivityPanel({ toolCalls, onClear }: ActivityPanelProps) {
             No tools {filter === "all" ? "executed yet" : `with status ${filter}`}
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={grid}>
             {recent.map((c) => <ToolCard key={c.id} tool={c} />)}
           </div>
         )}
@@ -88,4 +88,10 @@ const clearBtn: CSSProperties = {
 };
 const list: CSSProperties = {
   flex: 1, overflowY: "auto", padding: 8,
+};
+const grid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+  gap: 6,
+  alignItems: "start",
 };

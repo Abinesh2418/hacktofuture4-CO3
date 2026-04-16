@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { LogEntry } from "@/types/red.types";
 
-interface LogStreamProps { logs: LogEntry[]; onClear?: () => void; }
+interface LogStreamProps {
+  logs: LogEntry[];
+  onClear?: () => void;
+  /** When rendered inside a modal that already has its own title bar. */
+  hideHeader?: boolean;
+}
 type LogFilter = "ALL" | "INFO" | "WARN" | "ERROR";
 
 function formatTime(ts: string): string {
@@ -13,7 +18,7 @@ const COLORS: Record<string, string> = {
   INFO: "var(--green)", WARN: "var(--yellow)", ERROR: "var(--red)",
 };
 
-export function LogStream({ logs, onClear }: LogStreamProps) {
+export function LogStream({ logs, onClear, hideHeader = false }: LogStreamProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<LogFilter>("ALL");
   const [auto, setAuto] = useState(true);
@@ -25,31 +30,33 @@ export function LogStream({ logs, onClear }: LogStreamProps) {
 
   return (
     <div style={container}>
-      <div style={header}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ color: "var(--green)", fontSize: 12 }}>&#9618;</span>
-          <span style={title}>LIVE LOG</span>
+      {!hideHeader && (
+        <div style={header}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: "var(--green)", fontSize: 12 }}>&#9618;</span>
+            <span style={title}>LIVE LOG</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-ui)" }}>
+              {filtered.length}
+            </span>
+            <button onClick={() => setAuto(!auto)} style={{
+              ...autoBtn,
+              color: auto ? "var(--green)" : "var(--text-dim)",
+              borderColor: auto ? "var(--green-dim)" : "var(--text-dim)",
+            }}>
+              {auto ? "AUTO" : "SCROLL"}
+            </button>
+            {logs.length > 0 && onClear && (
+              <button onClick={onClear} style={{
+                fontSize: 8, fontWeight: 700, fontFamily: "var(--font-display)",
+                padding: "2px 6px", borderRadius: 3, border: "1px solid var(--red)",
+                background: "transparent", color: "var(--red)", cursor: "pointer", letterSpacing: 1,
+              }}>CLEAR</button>
+            )}
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-ui)" }}>
-            {filtered.length}
-          </span>
-          <button onClick={() => setAuto(!auto)} style={{
-            ...autoBtn,
-            color: auto ? "var(--green)" : "var(--text-dim)",
-            borderColor: auto ? "var(--green-dim)" : "var(--text-dim)",
-          }}>
-            {auto ? "AUTO" : "SCROLL"}
-          </button>
-          {logs.length > 0 && onClear && (
-            <button onClick={onClear} style={{
-              fontSize: 8, fontWeight: 700, fontFamily: "var(--font-display)",
-              padding: "2px 6px", borderRadius: 3, border: "1px solid var(--red)",
-              background: "transparent", color: "var(--red)", cursor: "pointer", letterSpacing: 1,
-            }}>CLEAR</button>
-          )}
-        </div>
-      </div>
+      )}
 
       <div style={filterRow}>
         {(["ALL", "INFO", "WARN", "ERROR"] as LogFilter[]).map((f) => (

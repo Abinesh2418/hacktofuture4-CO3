@@ -17,6 +17,7 @@ from red_agent.backend.routers import (
     strategy_routes,
 )
 from red_agent.backend.routers import report_routes
+from red_agent.backend.routers import cve_routes
 from red_agent.backend.websocket import red_ws
 
 RED_API_PORT = 8001
@@ -24,9 +25,12 @@ RED_API_PORT = 8001
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: place to wire up the RedController, event bus, CVE feed, etc.
+    import asyncio
+    from red_agent.backend.websocket.red_ws import manager
+    # Let the WS manager schedule broadcasts from CrewAI worker threads
+    # onto the main loop (avoids "Lock bound to a different event loop").
+    manager.bind_loop(asyncio.get_running_loop())
     yield
-    # Shutdown: close any open resources here.
 
 
 app = FastAPI(
@@ -38,7 +42,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_origins=[
+        "http://localhost:3001", "http://localhost:3002",
+        "http://localhost:5173", "http://localhost:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,6 +55,7 @@ app.include_router(chat_routes.router, tags=["chat"])
 app.include_router(scan_routes.router, prefix="/scan", tags=["scan"])
 app.include_router(exploit_routes.router, prefix="/exploit", tags=["exploit"])
 app.include_router(report_routes.router, prefix="/report", tags=["report"])
+app.include_router(cve_routes.router)  # /cve/lookup — NVD proxy
 app.include_router(strategy_routes.router, prefix="/strategy", tags=["strategy"])
 app.include_router(red_ws.router, tags=["websocket"])
 

@@ -108,3 +108,40 @@ class MissionStatus(BaseModel):
     phase: MissionPhase = MissionPhase.IDLE
     created_at: datetime = Field(default_factory=datetime.utcnow)
     error: str | None = None
+
+
+# ── Auto-pwn (deterministic SQLi pipeline, no LLM) ──
+
+
+class AutoPwnStepKind(str, Enum):
+    CURL_PROBE = "CURL_PROBE"
+    SQLMAP_DBS = "SQLMAP_DBS"
+    SQLMAP_TABLES = "SQLMAP_TABLES"
+    SQLMAP_DUMP = "SQLMAP_DUMP"
+    SQLMAP_DUMP_ALL = "SQLMAP_DUMP_ALL"
+
+
+class AutoPwnStep(BaseModel):
+    """A single deterministic step in the auto-SQLi exfiltration lane.
+
+    Surfaced in its own dashboard panel — never touched by the LLM.
+    """
+
+    id: str
+    mission_id: str | None = None
+    target: str
+    kind: AutoPwnStepKind
+    status: ToolStatus = ToolStatus.RUNNING
+    command: str = ""
+    summary: str = ""
+    db: str | None = None
+    table: str | None = None
+    items: list[str] = Field(default_factory=list)
+    rows: list[list[str]] = Field(default_factory=list)
+    # For consolidated dump cards: one section per (db, table) pair so the UI
+    # renders all extracted rows under a single card with collapsible groups.
+    sections: list[dict[str, Any]] = Field(default_factory=list)
+    raw_tail: str = ""
+    error: str | None = None
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: datetime | None = None

@@ -69,6 +69,7 @@ TOOLS: dict[str, ToolSpec] = {
     "nbtscan":      ToolSpec("nbtscan", "nbtscan", DEFAULT_TIMEOUT),
     "smbmap":       ToolSpec("smbmap", "smbmap", DEFAULT_TIMEOUT),
     "rpcclient":    ToolSpec("rpcclient", "rpcclient", DEFAULT_TIMEOUT),
+    "sqlmap":       ToolSpec("sqlmap", "sqlmap", LONG_TIMEOUT),
 }
 
 DEFAULT_WORDLISTS = {

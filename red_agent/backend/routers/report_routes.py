@@ -7,12 +7,42 @@ from datetime import datetime, timezone
 from io import BytesIO
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from red_agent.scanner.recon_agent import get_session_result as get_recon, list_sessions as list_recon
 from red_agent.exploiter.exploit_agent import get_exploit_result, list_exploit_sessions
+from red_agent.backend.services.mission_report import (
+    generate_markdown_report,
+    latest_mission_id,
+)
 
 router = APIRouter()
+
+
+# ─────────────────── Mission report (current pipeline) ───────────────────
+
+
+@router.get("/mission/latest")
+def download_latest_mission_report() -> Response:
+    """Download a markdown report for the most recently launched mission."""
+    mid = latest_mission_id()
+    fname, body = generate_markdown_report(mid)
+    return Response(
+        content=body,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/mission/{mission_id}")
+def download_mission_report(mission_id: str) -> Response:
+    """Download a markdown report for a specific mission."""
+    fname, body = generate_markdown_report(mission_id)
+    return Response(
+        content=body,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 def _generate_report(recon_id: str | None, exploit_id: str | None) -> str:

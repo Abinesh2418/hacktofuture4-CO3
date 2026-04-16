@@ -355,3 +355,137 @@ def parse_rpcclient(raw: RunResult, target: str) -> dict:
         if line.strip():
             out["findings"].append({"line": line.rstrip()})
     return out
+
+
+# -------- sqlmap ---------------------------------------------------------
+
+_SQLMAP_DUMP_HEADER = re.compile(r"^Database:\s*(\S+)|^Table:\s*(\S+)")
+_SQLMAP_INJECTABLE = re.compile(r"Parameter:\s*([^\(]+)\(([^)]+)\)")
+_SQLMAP_DBMS = re.compile(r"back-end DBMS:\s*(.+)")
+
+
+_SQLMAP_FATAL_PATTERNS = (
+    "connection timed out to the target URL",
+    "connection refused",
+    "host seems down",
+    "no usable links found",
+    "unable to connect to the target URL",
+    "name or service not known",
+    "all tested parameters do not appear to be injectable",
+)
+
+
+def parse_sqlmap(
+    raw: RunResult,
+    target: str,
+    mode: str = "detect",
+    extra: dict | None = None,
+) -> dict:
+    """sqlmap output is human-readable; we keep the FULL stdout in `raw_full`
+    (uncapped) so the LLM and dashboard see the entire dump, and also extract
+    structured `findings` for fast UI rendering."""
+    out = _base("sqlmap", target, raw)
+    out["mode"] = mode
+    if extra:
+        out.update({k: v for k, v in extra.items() if v is not None})
+
+    text = raw.text_out()
+    # Override raw_tail with full output — exfiltrated data must reach the user
+    out["raw_tail"] = text[-32000:]  # 32KB cap (way more than default 2KB)
+    out["raw_full"] = text
+
+    # Strip ANSI just in case --disable-coloring missed something
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+    # sqlmap exits 0 even when the target is unreachable. Promote the most
+    # informative critical line to `error` so the UI doesn't show a clean DONE
+    # for a run that never even reached the target.
+    lower = text.lower()
+    fatal_msg: str | None = None
+    for pat in _SQLMAP_FATAL_PATTERNS:
+        if pat in lower:
+            for line in text.splitlines():
+                if pat in line.lower():
+                    fatal_msg = line.strip().lstrip("\r")
+                    break
+            if fatal_msg:
+                break
+    if fatal_msg:
+        out["ok"] = False
+        out["error"] = fatal_msg[:500]
+
+    findings: list[dict] = []
+    lines = text.splitlines()
+
+    # 1) DBMS fingerprint
+    for line in lines:
+        m = _SQLMAP_DBMS.search(line)
+        if m:
+            findings.append({"type": "dbms", "value": m.group(1).strip()})
+            break
+
+    # 2) Injectable parameters
+    for line in lines:
+        m = _SQLMAP_INJECTABLE.search(line)
+        if m:
+            findings.append({
+                "type": "injection",
+                "param": m.group(1).strip(),
+                "place": m.group(2).strip(),
+            })
+
+    # 3) Databases
+    if mode == "dbs":
+        in_block = False
+        for line in lines:
+            if "available databases" in line:
+                in_block = True
+                continue
+            if in_block:
+                s = line.strip()
+                if s.startswith("[*]"):
+                    findings.append({"type": "database", "name": s.removeprefix("[*]").strip()})
+                elif s and not s.startswith("[") and not s.startswith("Database"):
+                    in_block = False
+
+    # 4) Tables
+    if mode == "tables":
+        cur_db = (extra or {}).get("db")
+        in_block = False
+        for line in lines:
+            s = line.strip()
+            if s.startswith("Database:"):
+                cur_db = s.split(":", 1)[1].strip()
+            elif s.startswith("|") and not s.startswith("| "):
+                # table separator row, ignore
+                continue
+            elif s.startswith("|") and len(s) > 2 and "table" not in s.lower():
+                name = s.strip("|").strip()
+                if name and name not in ("Tables", ""):
+                    findings.append({"type": "table", "db": cur_db, "name": name})
+
+    # 5) Dump rows — capture every "| ... |" data row inside a table block
+    if mode == "dump":
+        cur_db = None
+        cur_table = None
+        for line in lines:
+            s = line.strip()
+            if s.startswith("Database:"):
+                cur_db = s.split(":", 1)[1].strip()
+                continue
+            if s.startswith("Table:"):
+                cur_table = s.split(":", 1)[1].strip()
+                continue
+            if s.startswith("|") and s.endswith("|") and cur_table:
+                cells = [c.strip() for c in s.strip("|").split("|")]
+                # Skip pure separator rows
+                if any(c for c in cells):
+                    findings.append({
+                        "type": "row",
+                        "db": cur_db,
+                        "table": cur_table,
+                        "cells": cells,
+                    })
+
+    out["findings"] = findings
+    return out

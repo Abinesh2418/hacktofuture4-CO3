@@ -15,27 +15,45 @@ router = APIRouter()
 class RedConnectionManager:
     def __init__(self) -> None:
         self._connections: Set[WebSocket] = set()
-        self._lock = asyncio.Lock()
+        # NOTE: deliberately NOT using asyncio.Lock — it binds to whatever loop
+        # first awaits it, which breaks when CrewAI worker threads try to
+        # broadcast from their own temp loops. connect/disconnect happen on
+        # the main loop; broadcast iterates a snapshot so the set doesn't
+        # need a lock for readers.
+        self._main_loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Called once at startup so background threads can schedule broadcasts
+        on the main uvicorn loop."""
+        self._main_loop = loop
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
-        async with self._lock:
-            self._connections.add(ws)
+        self._connections.add(ws)
 
     async def disconnect(self, ws: WebSocket) -> None:
-        async with self._lock:
-            self._connections.discard(ws)
+        self._connections.discard(ws)
 
     async def broadcast(self, payload: dict) -> None:
-        async with self._lock:
-            stale: list[WebSocket] = []
-            for ws in self._connections:
-                try:
-                    await ws.send_json(payload)
-                except Exception:
-                    stale.append(ws)
-            for ws in stale:
-                self._connections.discard(ws)
+        stale: list[WebSocket] = []
+        for ws in list(self._connections):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                stale.append(ws)
+        for ws in stale:
+            self._connections.discard(ws)
+
+    def broadcast_threadsafe(self, payload: dict) -> None:
+        """Broadcast from any thread — schedules on the main loop if available,
+        otherwise falls back to a temporary loop."""
+        if self._main_loop and self._main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.broadcast(payload), self._main_loop)
+        else:
+            try:
+                asyncio.run(self.broadcast(payload))
+            except RuntimeError:
+                pass
 
 
 manager = RedConnectionManager()
@@ -62,6 +80,10 @@ async def red_log_stream(ws: WebSocket) -> None:
             await ws.send_json({"type": "tool_call", "payload": call.model_dump(mode="json")})
         for entry in await red_service.recent_logs(limit=50):
             await ws.send_json({"type": "log", "payload": entry.model_dump(mode="json")})
+        # Replay the deterministic auto-pwn lane.
+        from red_agent.backend.services.auto_pwn import recent_steps
+        for step in recent_steps(limit=50):
+            await ws.send_json({"type": "auto_pwn_step", "payload": step.model_dump(mode="json")})
 
         while True:
             try:

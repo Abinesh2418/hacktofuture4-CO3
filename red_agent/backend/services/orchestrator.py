@@ -30,6 +30,7 @@ _logger = logging.getLogger(__name__)
 class Mission:
     id: str
     target: str
+    attack_type: str = "full"  # full | sqli | cmdi | lfi | idor | xss
     phase: MissionPhase = MissionPhase.IDLE
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     recon_output: str = ""
@@ -46,8 +47,8 @@ class Mission:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id, "target": self.target, "phase": self.phase.value,
-            "created_at": self.created_at, "error": self.error,
+            "id": self.id, "target": self.target, "attack_type": self.attack_type,
+            "phase": self.phase.value, "created_at": self.created_at, "error": self.error,
         }
 
 
@@ -56,15 +57,18 @@ class MissionOrchestrator:
     def __init__(self) -> None:
         self._missions: dict[str, Mission] = {}
 
-    async def start_mission(self, target: str) -> Mission:
-        mission = Mission(id=str(uuid.uuid4()), target=target)
+    async def start_mission(self, target: str, *, attack_type: str = "full") -> Mission:
+        mission = Mission(id=str(uuid.uuid4()), target=target, attack_type=attack_type)
         self._missions[mission.id] = mission
         mission._task = asyncio.create_task(self._run_crew(mission))
         # Add done callback so errors aren't swallowed
         mission._task.add_done_callback(
             lambda t: _logger.error("Crew task failed: %s", t.exception()) if t.exception() else None
         )
-        await self._emit_log(mission, "INFO", f"Mission created against {target}")
+        await self._emit_log(
+            mission, "INFO",
+            f"Mission created against {target} (attack_type={attack_type})",
+        )
         return mission
 
     async def pause_mission(self, mission_id: str) -> bool:
@@ -123,7 +127,7 @@ class MissionOrchestrator:
 
             # Run the CrewAI crew (sync operation in executor)
             from red_agent.agents.crew import run_crew_mission
-            results = await run_crew_mission(mission.target)
+            results = await run_crew_mission(mission.target, attack_type=mission.attack_type)
 
             # Extract results
             mission.recon_output = results.get("recon_output", "")
@@ -144,6 +148,12 @@ class MissionOrchestrator:
                 await self._emit_chat(mission, f"**SECURITY ANALYSIS**\n\n{mission.analysis_output[:2000]}")
 
             await self._emit_phase(mission, MissionPhase.EXPLOIT)
+
+            # Deterministic auto-pwn lane — fires once per injectable URL
+            # discovered in recon. Runs in parallel with the LLM exploit
+            # output so the dashboard's auto-pwn box fills in independently.
+            await self._launch_auto_pwn(mission)
+
             if mission.exploit_output:
                 await self._emit_chat(mission, f"**EXPLOITATION RESULTS**\n\n{mission.exploit_output[:2000]}")
 
@@ -167,7 +177,18 @@ class MissionOrchestrator:
         except Exception as exc:
             mission.phase = MissionPhase.FAILED
             mission.error = str(exc)
-            await self._emit_log(mission, "ERROR", f"Crew failed: {exc}")
+            msg = str(exc)
+            if "ContentPolicyViolation" in msg or "content_filter" in msg.lower():
+                hint = (
+                    "Azure content filter rejected the agent prompt. The "
+                    "phrasing has been softened in this build — if you still "
+                    "see this, lower the filter severity in the Azure portal "
+                    "or switch the LLM to a self-hosted model."
+                )
+                await self._emit_log(mission, "ERROR", f"Crew blocked by Azure content filter — {hint}")
+                await self._emit_chat(mission, f"Mission halted: {hint}")
+            else:
+                await self._emit_log(mission, "ERROR", f"Crew failed: {exc}")
             _logger.exception("Mission %s crew error", mission.id[:8])
 
     # ══════════════════════════════════════════════════════════════════════
@@ -204,6 +225,31 @@ class MissionOrchestrator:
                 "timestamp": datetime.utcnow().isoformat(), "tool_calls": [],
             },
         })
+
+    async def _launch_auto_pwn(self, mission: Mission) -> None:
+        """Fire the deterministic SQLi pipeline for every injectable URL recon
+        discovered. Background tasks — the orchestrator does not await them so
+        the rest of the mission keeps streaming."""
+        try:
+            from red_agent.agents.tools import drain_injectable_urls
+            from red_agent.backend.services.auto_pwn import auto_sqli_pipeline
+        except Exception as exc:
+            await self._emit_log(mission, "WARN", f"auto_pwn import failed: {exc}")
+            return
+
+        urls = drain_injectable_urls()
+        if not urls:
+            return
+
+        await self._emit_log(
+            mission, "INFO",
+            f"auto_pwn lane armed for {len(urls)} injectable URL(s)",
+        )
+        for entry in urls:
+            url = entry.get("url")
+            if not url:
+                continue
+            asyncio.create_task(auto_sqli_pipeline(url, mission_id=mission.id))
 
     async def _emit_phase(self, mission: Mission, phase: MissionPhase) -> None:
         from red_agent.backend.websocket.red_ws import manager
